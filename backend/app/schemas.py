@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -63,8 +64,14 @@ class SourceAnalysis(BaseModel):
     sample_tasks: list[str] = Field(default_factory=list)  # примеры заданий из образца варианта
 
 
+class TruncatedFile(BaseModel):
+    filename: str
+    reason: Literal["partial", "dropped"]
+
+
 class GenerateResponse(BaseModel):
     quiz: Quiz
     source_chars: int
     truncated: bool
+    truncated_files: list[TruncatedFile] = Field(default_factory=list)
     analysis: SourceAnalysis | None = None
