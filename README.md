@@ -51,3 +51,28 @@ npm run dev            # http://localhost:5173, проксирует /api на :
 - `backend/app/schemas.py` — модель теста (Quiz/Question)
 - `frontend/src/App.tsx` — форма загрузки + отображение теста
 - `frontend/src/api.ts` — вызов бэка
+
+## Тестирование и линт
+
+Backend:
+```bash
+cd backend
+uv run ruff check .
+uv run pytest -q
+```
+
+Frontend:
+```bash
+cd frontend
+npm run lint
+npm run test
+npm run build
+```
+
+## Процесс разработки фич
+
+Новые фичи проходят через агентный пайплайн, а не пишутся вручную с нуля: сначала диалог с
+`analyst`-агентом формализует фичу в `docs/features/<slug>/spec.md` + `api-contract.md`, затем
+`/handoff <slug>` передаёт её `backend-dev` → `qa` → (мёрж вручную) → `frontend-dev` → `qa` →
+(мёрж вручную) без необходимости держать сессию открытой. Детали — в `CLAUDE.md` и
+`.claude/agents/`.
