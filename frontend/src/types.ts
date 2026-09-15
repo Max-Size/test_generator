@@ -26,9 +26,17 @@ export interface SourceAnalysis {
   sample_tasks: string[];
 }
 
+export type TruncatedFileReason = "partial" | "dropped";
+
+export interface TruncatedFile {
+  filename: string;
+  reason: TruncatedFileReason;
+}
+
 export interface GenerateResponse {
   quiz: Quiz;
   source_chars: number;
   truncated: boolean;
+  truncated_files?: TruncatedFile[];
   analysis: SourceAnalysis | null;
 }

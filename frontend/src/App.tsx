@@ -47,9 +47,16 @@ export default function App() {
                 </p>
               )}
             {result.truncated && (
-              <p className="mb-3 text-xs text-amber-600">
-                Материал длинный — использована первая часть ({result.source_chars} символов).
-              </p>
+              <ul className="mb-3 rounded-md bg-amber-50 p-3 text-xs text-amber-600">
+                {(result.truncated_files ?? []).map((f) => (
+                  <li key={f.filename}>
+                    {f.filename} —{" "}
+                    {f.reason === "partial"
+                      ? "обрезан, не поместился целиком"
+                      : "не поместился, не включён в тест"}
+                  </li>
+                ))}
+              </ul>
             )}
             <QuizView quiz={result.quiz} />
           </div>
