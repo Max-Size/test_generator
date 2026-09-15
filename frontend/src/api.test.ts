@@ -24,6 +24,35 @@ describe("generateQuiz", () => {
     vi.unstubAllGlobals();
   });
 
+  it("returns truncated_files when the backend reports truncated/dropped files", async () => {
+    const responseBody = {
+      quiz: { questions: [] },
+      source_chars: 87345,
+      truncated: true,
+      truncated_files: [
+        { filename: "lecture2.pdf", reason: "partial" },
+        { filename: "appendix.pdf", reason: "dropped" },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => responseBody,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateQuiz({
+      files: [],
+      numQuestions: 5,
+      questionTypes: ["single"],
+      topics: "",
+      sourceMode: "auto",
+    });
+
+    expect(result).toEqual(responseBody);
+
+    vi.unstubAllGlobals();
+  });
+
   it("throws with the server-provided detail on a failed response", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
