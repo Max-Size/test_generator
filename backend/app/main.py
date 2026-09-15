@@ -71,13 +71,19 @@ async def generate(
     if not types:
         raise HTTPException(422, "не указаны корректные типы вопросов")
 
+    max_file_bytes = settings.max_file_size_mb * 1024 * 1024
     parts: list[tuple[str, str]] = []
     with stage("extract_text", files=len(files)) as st:
         total_bytes = 0
         for f in files:
             data = await f.read()
-            total_bytes += len(data)
             name = f.filename or "file"
+            if len(data) > max_file_bytes:
+                raise HTTPException(
+                    422,
+                    f'файл "{name}" превышает максимальный размер {settings.max_file_size_mb} МБ',
+                )
+            total_bytes += len(data)
             with stage(f"extract:{name}", bytes=len(data)) as fst:
                 text = await extract_text(name, data)
                 fst["chars"] = len(text)
@@ -86,9 +92,11 @@ async def generate(
         st["total_chars"] = sum(len(t) for _, t in parts)
 
     with stage("combine", limit=settings.max_context_chars) as st:
-        context, truncated = combine(parts, settings.max_context_chars)
+        context, truncated_files = combine(parts, settings.max_context_chars)
+        truncated = bool(truncated_files)
         st["chars"] = len(context)
         st["truncated"] = truncated
+        st["truncated_files"] = len(truncated_files)
     if not context.strip():
         raise HTTPException(422, "из файлов не удалось извлечь текст")
 
@@ -118,5 +126,9 @@ async def generate(
         len(quiz.questions),
     )
     return GenerateResponse(
-        quiz=quiz, source_chars=len(context), truncated=truncated, analysis=analysis
+        quiz=quiz,
+        source_chars=len(context),
+        truncated=truncated,
+        truncated_files=truncated_files,
+        analysis=analysis,
     )

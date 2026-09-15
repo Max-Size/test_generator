@@ -1,5 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Бюджет контекста считается от контекстного окна модели (polza_model_context_tokens),
+# а не хранится статичной настройкой — см. docs/features/context-budget/spec.md.
+# Резерв под системный промпт/врезку анализа/схему ответа + пропорционально max_questions
+# под ответ модели (грубая, но консервативная оценка на вопрос).
+_BASE_RESERVED_TOKENS = 2_000
+_RESERVED_TOKENS_PER_QUESTION = 120
+# Консервативный коэффициент символов на токен: кириллица токенизируется плотнее
+# латиницы, поэтому берём меньшее значение, чем обычно приводят для английского текста.
+_CHARS_PER_TOKEN = 3
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -8,6 +18,9 @@ class Settings(BaseSettings):
     polza_base_url: str = "https://polza.ai/api/v1"
     polza_api_key: str = ""
     polza_model: str = "openai/gpt-4o"
+    # Контекстное окно модели из polza_model, в токенах. Обязательна в .env — обновляется
+    # вручную вместе с polza_model. Из неё считается max_context_chars.
+    polza_model_context_tokens: int
     # Просить у модели строгий JSON по схеме (response_format=json_schema).
     # Если выбранная модель это не поддерживает — выключить, останется json_object + ретрай.
     polza_json_schema: bool = True
@@ -21,8 +34,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
 
     max_files: int = 5
-    max_context_chars: int = 24_000
     max_questions: int = 30
+    # Максимальный размер одного загружаемого файла.
+    max_file_size_mb: int = 20
 
     # --- Извлечение содержимого документов ---
     # Кэш результатов извлечения (Markdown) по SHA-256 файла
@@ -46,6 +60,11 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def max_context_chars(self) -> int:
+        reserved = _BASE_RESERVED_TOKENS + self.max_questions * _RESERVED_TOKENS_PER_QUESTION
+        return max(0, (self.polza_model_context_tokens - reserved) * _CHARS_PER_TOKEN)
 
 
 settings = Settings()

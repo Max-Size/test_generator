@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from .config import settings
 from .llm import transcribe_page
 from .obs import log
+from .schemas import TruncatedFile
 from .text_clean import clean_markdown, page_has_symbol_font, page_text_from_dict
 
 
@@ -125,10 +126,47 @@ async def extract_text(filename: str, data: bytes) -> str:
     return text
 
 
-def combine(parts: list[tuple[str, str]], limit: int) -> tuple[str, bool]:
-    """Склеить тексты файлов, обрезать до limit символов. Возвращает (текст, truncated)."""
-    chunks = [f"### {name}\n{text.strip()}" for name, text in parts if text.strip()]
-    full = "\n\n".join(chunks)
-    if len(full) <= limit:
-        return full, False
-    return full[:limit], True
+def combine(parts: list[tuple[str, str]], limit: int) -> tuple[str, list[TruncatedFile]]:
+    """Уложить файлы в промпт целиком, по порядку загрузки, пока укладываются в limit
+    символов. Файл, на котором лимит заканчивается, обрезается по последней границе
+    абзаца (``\\n\\n``); если в помещающейся части абзаца не нашлось — файл выпадает
+    целиком, а не режется посреди слова. Файлы после точки обрезки не попадают в промпт.
+    Возвращает (текст, список обрезанных/выпавших файлов).
+    """
+    chunks: list[str] = []
+    truncated: list[TruncatedFile] = []
+    used = 0
+    cut = False
+
+    for name, text in parts:
+        text = text.strip()
+        if not text:
+            continue
+        chunk = f"### {name}\n{text}"
+
+        if cut:
+            truncated.append(TruncatedFile(filename=name, reason="dropped"))
+            continue
+
+        sep = 2 if chunks else 0  # длина "\n\n" перед этим чанком при финальной склейке
+        remaining = limit - used - sep
+        if len(chunk) <= remaining:
+            chunks.append(chunk)
+            used += len(chunk) + sep
+            continue
+
+        if remaining <= 0:
+            truncated.append(TruncatedFile(filename=name, reason="dropped"))
+            cut = True
+            continue
+
+        piece = chunk[:remaining]
+        boundary = piece.rfind("\n\n")
+        if boundary <= 0:
+            truncated.append(TruncatedFile(filename=name, reason="dropped"))
+        else:
+            chunks.append(piece[:boundary])
+            truncated.append(TruncatedFile(filename=name, reason="partial"))
+        cut = True
+
+    return "\n\n".join(chunks), truncated
