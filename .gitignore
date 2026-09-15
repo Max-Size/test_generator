@@ -1,0 +1,20 @@
+# Python
+backend/.venv/
+backend/.env
+backend/.cache/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Misc
+.DS_Store
+*.log
+.vscode/
+*.tsbuildinfo
+
+# Personal/scratch documents (not part of the codebase)
+/*.pdf
+/PVI_09_04_03_Prikladnaya_informatika.md
