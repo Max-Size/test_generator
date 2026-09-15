@@ -31,6 +31,7 @@ You are given a feature slug. Read, in order:
 - Match existing style exactly: same import layout, same use of `stage()`/`log` from `app/obs.py` for observability, same error handling via `HTTPException`.
 - Don't add abstractions, config flags, or error handling beyond what the contract calls for.
 - Add/extend tests in `backend/tests/` for every new endpoint or behavior change — at minimum the happy path and the documented error cases from the contract.
+- If `spec.md` has a `## Current behavior` section, this is a change to existing behavior, not an addition: find and update the tests/callers that currently assert the old behavior instead of leaving them to rot alongside new ones that assert the new behavior.
 
 ## Self-verification (before opening a PR)
 

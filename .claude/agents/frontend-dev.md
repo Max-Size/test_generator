@@ -40,6 +40,7 @@ Read, in order:
 - Match existing style: the `fetch`-based pattern in `api.ts`, the prop/typing style in `types.ts`, component structure under `src/components/`.
 - Don't add state management libraries, abstractions, or config beyond what the feature needs.
 - Add/extend tests (Vitest) for new logic in `api.ts` or non-trivial component behavior, following `src/api.test.ts` as the pattern.
+- If `spec.md` has a `## Current behavior` section, this is a change to existing behavior, not an addition: find and update the tests/components that currently assert the old behavior instead of leaving them to rot alongside new ones that assert the new behavior.
 
 ## Self-verification (before opening a PR)
 
