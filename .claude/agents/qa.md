@@ -16,6 +16,13 @@ gh pr list --head feature/<slug>-<role> --state open --json number,state,baseRef
 
 If no open PR matches that branch, or more than one does, or its base isn't `main`, stop — do not guess which PR to review.
 
+Then check you haven't already reviewed this exact state of the PR — you can be woken twice for the same push (e.g. a direct trigger from the dev agent plus a stray webhook):
+```
+gh pr view <PR_NUMBER> --json commits --jq '.commits[-1].committedDate'
+gh pr view <PR_NUMBER> --json comments --jq '[.comments[] | select(.body | startswith("QA:"))] | last.createdAt'
+```
+If a `QA:` comment already exists at or after the latest commit's timestamp, stop — this PR was already reviewed at its current state; this is a duplicate wake-up, not a new review to do.
+
 ## Input
 
 Read, in this order, treating them as the source of truth over anything the PR description claims:
