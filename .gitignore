@@ -18,3 +18,7 @@ frontend/dist/
 # Personal/scratch documents (not part of the codebase)
 /*.pdf
 /PVI_09_04_03_Prikladnaya_informatika.md
+
+# Claude Code local session state (not project config)
+/.claude/scheduled_tasks.lock
+/.claude/worktrees/
