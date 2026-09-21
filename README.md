@@ -30,7 +30,6 @@ RAG на этом этапе нет: весь текст документа кл
 ```bash
 cd backend
 uv sync                 # создаёт .venv и ставит зависимости
-cp .env.example .env    # вписать POLZA_API_KEY
 uv run uvicorn app.main:app --reload --port 8000
 ```
 

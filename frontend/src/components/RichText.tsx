@@ -2,18 +2,25 @@ import { useMemo } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
-// Разбивает строку на текст и формулы ($...$ — строчные, $$...$$ — выключные)
-// и рендерит формулы через KaTeX. LaTeX приходит из vision-распознавания страниц PDF.
-const TOKEN = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g;
+// Разбивает строку на текст и формулы и рендерит их через KaTeX. Модель присылает
+// LaTeX как в $...$ / $$...$$ (vision-распознавание PDF), так и в \(...\) / \[...\]
+// (генерация теста) — поддерживаем оба варианта разделителей.
+const TOKEN = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
 
 export default function RichText({ children }: { children: string }) {
   const parts = useMemo(() => {
     const text = children ?? "";
     return text.split(TOKEN).map((chunk, i) => {
-      const block = chunk.startsWith("$$") && chunk.endsWith("$$");
-      const inline = !block && chunk.startsWith("$") && chunk.endsWith("$") && chunk.length > 2;
+      const block =
+        (chunk.startsWith("$$") && chunk.endsWith("$$")) ||
+        (chunk.startsWith("\\[") && chunk.endsWith("\\]"));
+      const inline =
+        !block &&
+        ((chunk.startsWith("$") && chunk.endsWith("$") && chunk.length > 2) ||
+          (chunk.startsWith("\\(") && chunk.endsWith("\\)")));
       if (!block && !inline) return { key: i, kind: "text" as const, value: chunk };
-      const tex = chunk.slice(block ? 2 : 1, block ? -2 : -1);
+      const delimLen = chunk.startsWith("$") ? 1 : 2;
+      const tex = chunk.slice(delimLen, chunk.length - delimLen);
       try {
         const html = katex.renderToString(tex, {
           displayMode: block,
