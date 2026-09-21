@@ -43,13 +43,11 @@ npm run build
 
 All four must be clean before opening or updating a PR.
 
-## Feature pipeline (analyst → dev agents → QA)
+## Feature pipeline (analyst → dev subagents → QA subagents)
 
-Features go through a defined agent pipeline rather than ad hoc implementation — see `.claude/agents/analyst.md`, `backend-dev.md`, `frontend-dev.md`, `qa.md`, and `.claude/skills/handoff/SKILL.md` for the full roles.
+Features go through a defined agent pipeline rather than ad hoc implementation — see `.claude/agents/analyst.md`, `backend-dev.md`, `frontend-dev.md`, `qa.md`, and `.claude/skills/implement/SKILL.md` for the full roles. Everything runs as subagents inside ONE Claude Code session (local or claude.ai/code); we deliberately do not use cloud routines or GitHub webhooks, because event-triggered wake-ups proved unreliable.
 
 Summary:
-1. The CEO discusses a feature interactively with the `analyst` agent, which writes `docs/features/<slug>/spec.md` and `api-contract.md` (draft, then `status: approved` only after explicit sign-off).
-2. `/handoff <slug>` wires the approved feature to unattended cloud routines: `backend-dev` implements and opens a PR → `qa` verifies it against the contract as a black box and comments (never merges) → the CEO merges manually → `frontend-dev` wakes up, implements against the now-merged contract, opens a PR → `qa` verifies again → the CEO merges.
-3. Every agent re-derives its own precondition from repo state (branch names, PR state, spec `status`) rather than trusting who/what woke it — webhook filtering in this pipeline is best-effort, not authoritative. Don't remove those checks when editing agent prompts.
-
-If you are a `backend-dev`/`frontend-dev`/`qa` cloud routine reading this: your actual task instructions are in the corresponding `.claude/agents/*.md` file referenced in your prompt — read that file, not just this one.
+1. The CEO discusses a feature interactively with the `analyst` agent, which writes `docs/features/<slug>/spec.md` and `api-contract.md` (draft, then `status: approved` only after the CEO's own explicit sign-off, then committed to `main`).
+2. `/implement <slug>` runs the rest in that session: `backend-dev` and `frontend-dev` subagents implement their sides in parallel against the approved contract (they don't commit) → two separate `qa` subagents, one per side, verify the branch against the spec/contract in a clean worktree and return `QA-VERDICT: PASS|FAIL` → on FAIL the dev fixes and QA re-checks (max 2 rounds per side, then `needs-human`) → the orchestrator opens ONE PR and posts the QA verdicts as comments → the CEO merges manually. Nobody but the CEO merges.
+3. QA is given only the slug, role and branch — never a summary of how the code was written — so it verifies from the spec, not from the author's reasoning. Don't weaken that when editing prompts.
