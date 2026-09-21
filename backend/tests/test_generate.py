@@ -118,3 +118,52 @@ def test_build_user_prompt_branches() -> None:
         "CTX", 3, ["single"], None, [SourceKind.sample, SourceKind.material]
     )
     assert "опирайся на него" in with_material
+
+
+def _capture(monkeypatch, seen, n_questions=1):
+    async def fake(context, num_questions, types, topics, source_kinds) -> Quiz:
+        seen["n"] = num_questions
+        q = Question(id=1, type=QuestionType.short, text="В?", correct_text="О")
+        return Quiz(title="Тест", questions=[q.model_copy(update={"id": i}) for i in range(n_questions)])
+
+    monkeypatch.setattr("app.main.generate_quiz", fake)
+
+
+def _post(data):
+    return client.post(
+        "/api/generate", files={"files": ("f1.txt", b"Text.", "text/plain")}, data=data
+    )
+
+
+def test_auto_count_with_sample(monkeypatch) -> None:
+    seen = {}
+    _capture(monkeypatch, seen)
+    assert _post({"source_kinds": "sample"}).status_code == 200
+    assert seen["n"] is None
+
+
+def test_default_count_without_sample(monkeypatch) -> None:
+    seen = {}
+    _capture(monkeypatch, seen)
+    assert _post({"source_kinds": "material"}).status_code == 200
+    assert seen["n"] == 10
+
+
+def test_explicit_count_wins_and_validated(monkeypatch) -> None:
+    seen = {}
+    _capture(monkeypatch, seen)
+    assert _post({"source_kinds": "sample", "num_questions": 5}).status_code == 200
+    assert seen["n"] == 5
+    assert _post({"num_questions": settings.max_questions + 1}).status_code == 422
+
+
+def test_truncates_over_max(monkeypatch) -> None:
+    _capture(monkeypatch, {}, n_questions=settings.max_questions + 5)
+    r = _post({"source_kinds": "sample"})
+    assert len(r.json()["quiz"]["questions"]) == settings.max_questions
+
+
+def test_prompt_auto_count() -> None:
+    p = build_user_prompt("CTX", None, ["single"], None, [SourceKind.sample])
+    assert "сколько их в приведённом образце" in p
+    assert str(settings.max_questions) in p

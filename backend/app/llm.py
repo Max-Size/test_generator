@@ -57,7 +57,7 @@ QUIZ_JSON_SCHEMA = _strictify(Quiz.model_json_schema())
 
 def build_user_prompt(
     context: str,
-    num_questions: int,
+    num_questions: int | None,
     types: list[str],
     topics: str | None,
     source_kinds: list[SourceKind],
@@ -66,6 +66,12 @@ def build_user_prompt(
     has_material = SourceKind.material in source_kinds
 
     parts: list[str] = []
+    count_phrase = (
+        f"{num_questions} заданий"
+        if num_questions is not None
+        else "столько заданий, сколько их в приведённом образце варианта "
+        f"(не более {settings.max_questions})"
+    )
 
     if spec_like:
         goals = []
@@ -79,7 +85,7 @@ def build_user_prompt(
             "ВАЖНО: приложенный документ — это не учебная теория, а описание экзамена "
             "(его структура, перечень тем и/или образец варианта). "
             "Не задавай вопросы про сам документ (сроки, регламент, число баллов, авторов). "
-            f"Твоя задача — составить НОВЫЙ тест из {num_questions} заданий, который "
+            f"Твоя задача — составить НОВЫЙ тест из {count_phrase}, который "
             "воспроизводит темы, типы заданий и уровень сложности описанного экзамена: "
             + "; ".join(goals)
             + ". Равномерно покрывай темы."
@@ -220,7 +226,7 @@ async def transcribe_page(png_bytes: bytes, page_no: int) -> str:
 
 async def generate_quiz(
     context: str,
-    num_questions: int,
+    num_questions: int | None,
     types: list[str],
     topics: str | None,
     source_kinds: list[SourceKind],

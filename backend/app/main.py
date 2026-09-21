@@ -21,6 +21,7 @@ app.add_middleware(
 )
 
 ALL_TYPES = ["single", "multiple", "true_false", "short"]
+DEFAULT_NUM_QUESTIONS = 10
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -40,7 +41,7 @@ async def health() -> dict:
 @app.post("/api/generate", response_model=GenerateResponse)
 async def generate(
     files: list[UploadFile] = File(...),
-    num_questions: int = Form(...),
+    num_questions: int | None = Form(None),
     question_types: str = Form("single,multiple,true_false"),
     topics: str | None = Form(None),
     source_kinds: str = Form("material"),
@@ -55,7 +56,7 @@ async def generate(
         topics,
         source_kinds,
     )
-    if not 1 <= num_questions <= settings.max_questions:
+    if num_questions is not None and not 1 <= num_questions <= settings.max_questions:
         raise HTTPException(422, f"num_questions должен быть 1..{settings.max_questions}")
     if len(files) > settings.max_files:
         raise HTTPException(422, f"максимум {settings.max_files} файлов")
@@ -101,8 +102,18 @@ async def generate(
     if not context.strip():
         raise HTTPException(422, "из файлов не удалось извлечь текст")
 
-    with stage("llm.generate_quiz", n=num_questions) as st:
-        quiz: Quiz = await generate_quiz(context, num_questions, types, topics, kinds)
+    auto_count = num_questions is None and SourceKind.sample in kinds
+    n = num_questions if num_questions is not None else (None if auto_count else DEFAULT_NUM_QUESTIONS)
+
+    with stage("llm.generate_quiz", n=n) as st:
+        quiz: Quiz = await generate_quiz(context, n, types, topics, kinds)
+        if len(quiz.questions) > settings.max_questions:
+            log.warning(
+                "модель вернула %d вопросов, обрезаем до %d",
+                len(quiz.questions),
+                settings.max_questions,
+            )
+            quiz.questions = quiz.questions[: settings.max_questions]
         st["questions"] = len(quiz.questions)
         st["types"] = "/".join(sorted({q.type.value for q in quiz.questions}))
 
