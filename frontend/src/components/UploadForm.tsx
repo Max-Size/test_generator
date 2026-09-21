@@ -7,10 +7,10 @@ const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "short", label: "Короткий ответ" },
 ];
 
-const SOURCE_MODE_OPTIONS: { value: string; label: string }[] = [
-  { value: "auto", label: "Определить автоматически" },
+const SOURCE_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "material", label: "Теория / конспект" },
-  { value: "specification", label: "Спецификация экзамена / образец варианта" },
+  { value: "specification", label: "Спецификация / темы экзамена" },
+  { value: "sample", label: "Образец варианта / примеры заданий" },
 ];
 
 export interface FormValues {
@@ -18,7 +18,7 @@ export interface FormValues {
   numQuestions: number;
   questionTypes: string[];
   topics: string;
-  sourceMode: string;
+  sourceKinds: string[];
 }
 
 export default function UploadForm({
@@ -32,21 +32,26 @@ export default function UploadForm({
   const [numQuestions, setNumQuestions] = useState(10);
   const [questionTypes, setQuestionTypes] = useState<string[]>(["single", "true_false"]);
   const [topics, setTopics] = useState("");
-  const [sourceMode, setSourceMode] = useState("auto");
+  const [sourceKinds, setSourceKinds] = useState<string[]>(["material"]);
+
+  const toggleKind = (v: string) =>
+    setSourceKinds((prev) =>
+      prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v],
+    );
 
   const toggleType = (v: string) =>
     setQuestionTypes((prev) =>
       prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v],
     );
 
-  const canSubmit = files.length > 0 && questionTypes.length > 0 && !loading;
+  const canSubmit = files.length > 0 && questionTypes.length > 0 && sourceKinds.length > 0 && !loading;
 
   return (
     <form
       className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onSubmit({ files, numQuestions, questionTypes, topics, sourceMode });
+        if (canSubmit) onSubmit({ files, numQuestions, questionTypes, topics, sourceKinds });
       }}
     >
       <div>
@@ -69,19 +74,24 @@ export default function UploadForm({
 
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-700">
-          Что за документ
+          Что содержит документ
         </label>
-        <select
-          value={sourceMode}
-          onChange={(e) => setSourceMode(e.target.value)}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        >
-          {SOURCE_MODE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
+        <div className="flex flex-wrap gap-2">
+          {SOURCE_KIND_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => toggleKind(opt.value)}
+              className={`rounded-full border px-3 py-1 text-sm ${
+                sourceKinds.includes(opt.value)
+                  ? "border-indigo-600 bg-indigo-600 text-white"
+                  : "border-slate-300 bg-white text-slate-700"
+              }`}
+            >
               {opt.label}
-            </option>
+            </button>
           ))}
-        </select>
+        </div>
         <p className="mt-1 text-xs text-slate-500">
           Для спецификации экзамена тест строится по описанным темам и образцу варианта,
           а не по тексту документа.

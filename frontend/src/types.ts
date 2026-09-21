@@ -17,15 +17,6 @@ export interface Quiz {
 
 export type SourceKind = "material" | "specification" | "sample";
 
-export interface SourceAnalysis {
-  kinds: SourceKind[];
-  summary: string;
-  exam_structure: string | null;
-  topics: string[];
-  task_types: string[];
-  sample_tasks: string[];
-}
-
 export type TruncatedFileReason = "partial" | "dropped";
 
 export interface TruncatedFile {
@@ -38,5 +29,4 @@ export interface GenerateResponse {
   source_chars: number;
   truncated: boolean;
   truncated_files?: TruncatedFile[];
-  analysis: SourceAnalysis | null;
 }

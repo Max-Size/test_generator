@@ -15,7 +15,7 @@ describe("generateQuiz", () => {
       numQuestions: 5,
       questionTypes: ["single"],
       topics: "",
-      sourceMode: "auto",
+      sourceKinds: ["material"],
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/generate", expect.objectContaining({ method: "POST" }));
@@ -45,7 +45,7 @@ describe("generateQuiz", () => {
       numQuestions: 5,
       questionTypes: ["single"],
       topics: "",
-      sourceMode: "auto",
+      sourceKinds: ["material"],
     });
 
     expect(result).toEqual(responseBody);
@@ -67,7 +67,7 @@ describe("generateQuiz", () => {
         numQuestions: 5,
         questionTypes: ["single"],
         topics: "",
-        sourceMode: "auto",
+        sourceKinds: ["material"],
       }),
     ).rejects.toThrow("bad input");
 

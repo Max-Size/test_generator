@@ -5,13 +5,13 @@ export async function generateQuiz(params: {
   numQuestions: number;
   questionTypes: string[];
   topics: string;
-  sourceMode: string;
+  sourceKinds: string[];
 }): Promise<GenerateResponse> {
   const fd = new FormData();
   params.files.forEach((f) => fd.append("files", f));
   fd.append("num_questions", String(params.numQuestions));
   fd.append("question_types", params.questionTypes.join(","));
-  fd.append("source_mode", params.sourceMode);
+  fd.append("source_kinds", params.sourceKinds.join(","));
   if (params.topics.trim()) fd.append("topics", params.topics.trim());
 
   const resp = await fetch("/api/generate", { method: "POST", body: fd });
