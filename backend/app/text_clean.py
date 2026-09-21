@@ -116,8 +116,9 @@ def _find_fractions(page: "pymupdf.Page", lines: list[dict]) -> list[tuple[dict,
         if any(abs((b.y0 + b.y1) / 2 - y) < 40 for b in others):
             continue  # несколько близких черт — неоднозначно
         in_x = [s for s in all_spans if bar.x0 - 1 <= (s["bbox"][0] + s["bbox"][2]) / 2 <= bar.x1 + 1]
-        above = [s for s in in_x if s["bbox"][3] <= y + 1 and y - s["bbox"][3] < 1.5 * s["size"]]
-        below = [s for s in in_x if s["bbox"][1] >= y - 1 and s["bbox"][1] - y < 1.5 * s["size"]]
+        # по центру span'а: tight bbox глифов часто заходит на черту
+        above = [s for s in in_x if (s["bbox"][1] + s["bbox"][3]) / 2 < y and y - s["bbox"][3] < 1.5 * s["size"]]
+        below = [s for s in in_x if (s["bbox"][1] + s["bbox"][3]) / 2 > y and s["bbox"][1] - y < 1.5 * s["size"]]
         for side in (above, below):
             synth = [s for s in side if "_real" in s]
             if synth:  # знак между вложенными дробями лежит на уровне их черты
@@ -157,7 +158,12 @@ def _find_fractions(page: "pymupdf.Page", lines: list[dict]) -> list[tuple[dict,
                 if s["_anchor"] is not None:
                     s["_anchor"]["_fracs"].remove(s["_fx"])
         all_spans = [s for s in all_spans if s not in above and s not in below]
-        anchor = anchors[0] if len(anchors) == 1 else None  # у вложенной дроби якоря может не быть
+        # ближайшая по горизонтали строка; у вложенной дроби якоря может не быть
+        anchor = min(
+            anchors,
+            key=lambda ln: max(ln["bbox"][0] - bar.x1, bar.x0 - ln["bbox"][2], 0),
+            default=None,
+        )
         entry = (anchor, latex, real)
         result.append(entry)
         fx = ((bar.x0 + bar.x1) / 2, latex)
@@ -169,7 +175,7 @@ def _find_fractions(page: "pymupdf.Page", lines: list[dict]) -> list[tuple[dict,
             "bbox": (min(b[0] for b in boxes), min(b[1] for b in boxes),
                      max(b[2] for b in boxes), max(b[3] for b in boxes)),
             "size": max(s["size"] for s in above + below), "text": latex, "font": "",
-            "_real": real, "_res": entry, "_anchor": anchors[0], "_fx": fx,
+            "_real": real, "_res": entry, "_anchor": anchor, "_fx": fx,
         })
     return [r for r in result if r[0] is not None]
 
