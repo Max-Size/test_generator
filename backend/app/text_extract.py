@@ -35,9 +35,12 @@ def _cache_file(data: bytes) -> Path:
 def _page_needs_vision(page: "pymupdf.Page", text: str) -> bool:
     if not settings.vision_enabled:
         return False
-    low_text = len(text.strip()) < settings.vision_min_text_chars
-    has_images = bool(page.get_images())
-    return low_text or has_images
+    return (
+        len(text.strip()) < settings.vision_min_text_chars
+        or bool(page.get_images())
+        or page_has_symbol_font(page)
+        or bool(page.get_drawings())
+    )
 
 
 async def _from_pdf(data: bytes) -> str:
