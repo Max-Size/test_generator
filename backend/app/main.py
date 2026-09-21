@@ -4,9 +4,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .llm import analyze_sources, generate_quiz
+from .llm import generate_quiz
 from .obs import log, new_request_id, setup_logging, stage
-from .schemas import GenerateResponse, Quiz, SourceAnalysis, SourceKind
+from .schemas import GenerateResponse, Quiz, SourceKind
 from .text_extract import combine, extract_text
 
 setup_logging()
@@ -21,10 +21,6 @@ app.add_middleware(
 )
 
 ALL_TYPES = ["single", "multiple", "true_false", "short"]
-# auto — бэкенд сам определяет тип документа; material — считать теорией;
-# specification — трактовать как спецификацию экзамена / образец варианта
-SOURCE_MODES = ["auto", "material", "specification"]
-
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -47,21 +43,18 @@ async def generate(
     num_questions: int = Form(...),
     question_types: str = Form("single,multiple,true_false"),
     topics: str | None = Form(None),
-    source_mode: str = Form("auto"),
+    source_kinds: str = Form("material"),
 ) -> GenerateResponse:
     new_request_id()
     req_t0 = time.perf_counter()
     log.info(
-        "POST /api/generate | files=%d num_questions=%s types=%r topics=%r source_mode=%r",
+        "POST /api/generate | files=%d num_questions=%s types=%r topics=%r source_kinds=%r",
         len(files),
         num_questions,
         question_types,
         topics,
-        source_mode,
+        source_kinds,
     )
-    if source_mode not in SOURCE_MODES:
-        raise HTTPException(422, f"source_mode должен быть одним из {SOURCE_MODES}")
-
     if not 1 <= num_questions <= settings.max_questions:
         raise HTTPException(422, f"num_questions должен быть 1..{settings.max_questions}")
     if len(files) > settings.max_files:
@@ -70,6 +63,14 @@ async def generate(
     types = [t.strip() for t in question_types.split(",") if t.strip() in ALL_TYPES]
     if not types:
         raise HTTPException(422, "не указаны корректные типы вопросов")
+
+    kinds = [
+        SourceKind(k)
+        for k in dict.fromkeys(s.strip() for s in source_kinds.split(","))
+        if k in SourceKind._value2member_map_
+    ]
+    if not kinds:
+        raise HTTPException(422, "не указаны корректные типы источника")
 
     max_file_bytes = settings.max_file_size_mb * 1024 * 1024
     parts: list[tuple[str, str]] = []
@@ -100,20 +101,8 @@ async def generate(
     if not context.strip():
         raise HTTPException(422, "из файлов не удалось извлечь текст")
 
-    analysis: SourceAnalysis | None = None
-    if source_mode == "material":
-        analysis = SourceAnalysis(kinds=[SourceKind.material], summary="учебный материал")
-    else:
-        with stage("llm.analyze_sources") as st:
-            analysis = await analyze_sources(context)
-            if source_mode == "specification" and SourceKind.specification not in analysis.kinds:
-                analysis.kinds = [*analysis.kinds, SourceKind.specification]
-            st["kinds"] = "/".join(k.value for k in analysis.kinds)
-            st["topics"] = len(analysis.topics)
-            st["samples"] = len(analysis.sample_tasks)
-
     with stage("llm.generate_quiz", n=num_questions) as st:
-        quiz: Quiz = await generate_quiz(context, num_questions, types, topics, analysis)
+        quiz: Quiz = await generate_quiz(context, num_questions, types, topics, kinds)
         st["questions"] = len(quiz.questions)
         st["types"] = "/".join(sorted({q.type.value for q in quiz.questions}))
 
@@ -130,5 +119,4 @@ async def generate(
         source_chars=len(context),
         truncated=truncated,
         truncated_files=truncated_files,
-        analysis=analysis,
     )

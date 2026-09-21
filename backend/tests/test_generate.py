@@ -1,13 +1,14 @@
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.llm import build_user_prompt
 from app.main import app
-from app.schemas import Question, QuestionType, Quiz
+from app.schemas import Question, QuestionType, Quiz, SourceKind
 
 client = TestClient(app)
 
 
-async def _fake_generate_quiz(context, num_questions, types, topics, analysis=None) -> Quiz:
+async def _fake_generate_quiz(context, num_questions, types, topics, source_kinds) -> Quiz:
     return Quiz(
         title="Тест",
         questions=[
@@ -28,7 +29,7 @@ def test_file_over_size_limit_rejected(monkeypatch) -> None:
     response = client.post(
         "/api/generate",
         files={"files": ("big.txt", oversized, "text/plain")},
-        data={"num_questions": 1, "source_mode": "material"},
+        data={"num_questions": 1, "source_kinds": "material"},
     )
 
     assert response.status_code == 422
@@ -50,7 +51,7 @@ def test_generate_reports_dropped_file(monkeypatch) -> None:
             ("files", ("f1.txt", text1.encode(), "text/plain")),
             ("files", ("f2.txt", "Материал второго файла.".encode(), "text/plain")),
         ],
-        data={"num_questions": 1, "source_mode": "material"},
+        data={"num_questions": 1, "source_kinds": "material"},
     )
 
     assert response.status_code == 200
@@ -66,10 +67,54 @@ def test_generate_no_truncation_when_everything_fits(monkeypatch) -> None:
     response = client.post(
         "/api/generate",
         files={"files": ("f1.txt", b"Short material.", "text/plain")},
-        data={"num_questions": 1, "source_mode": "material"},
+        data={"num_questions": 1, "source_kinds": "material"},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["truncated"] is False
     assert body["truncated_files"] == []
+
+
+def test_invalid_source_kinds_rejected() -> None:
+    response = client.post(
+        "/api/generate",
+        files={"files": ("f1.txt", b"Text.", "text/plain")},
+        data={"num_questions": 1, "source_kinds": "bogus, ,"},
+    )
+    assert response.status_code == 422
+
+
+def test_source_kinds_defaults_to_material(monkeypatch) -> None:
+    seen = {}
+
+    async def fake(context, num_questions, types, topics, source_kinds) -> Quiz:
+        seen["kinds"] = source_kinds
+        return await _fake_generate_quiz(context, num_questions, types, topics, source_kinds)
+
+    monkeypatch.setattr("app.main.generate_quiz", fake)
+    response = client.post(
+        "/api/generate",
+        files={"files": ("f1.txt", b"Text.", "text/plain")},
+        data={"num_questions": 1},
+    )
+    assert response.status_code == 200
+    assert "analysis" not in response.json()
+    assert seen["kinds"] == [SourceKind.material]
+
+
+def test_build_user_prompt_branches() -> None:
+    material = build_user_prompt("CTX", 3, ["single"], None, [SourceKind.material])
+    assert "Материал:" in material and "НОВЫЙ тест" not in material
+
+    both = build_user_prompt(
+        "CTX", 3, ["single"], None, [SourceKind.specification, SourceKind.sample]
+    )
+    assert "перечисленные темы и структуру" in both
+    assert "по образцу приведённых заданий" in both
+    assert "опирайся на него" not in both
+
+    with_material = build_user_prompt(
+        "CTX", 3, ["single"], None, [SourceKind.sample, SourceKind.material]
+    )
+    assert "опирайся на него" in with_material

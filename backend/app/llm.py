@@ -1,5 +1,4 @@
-"""Клиент Polza.ai (OpenAI-совместимый chat completions): разбор типа документа,
-сборка промпта, запрос JSON по схеме, ретрай при кривом ответе, vision-распознавание
+"""Клиент Polza.ai (OpenAI-совместимый chat completions): сборка промпта, запрос JSON по схеме, ретрай при кривом ответе, vision-распознавание
 страниц PDF."""
 import base64
 import json
@@ -11,7 +10,7 @@ from pydantic import ValidationError
 
 from .config import settings
 from .obs import log, stage
-from .schemas import Quiz, SourceAnalysis, SourceKind
+from .schemas import Quiz, SourceKind
 
 SYSTEM_PROMPT = (
     "Ты — генератор экзаменационных тестов. На основе предоставленного материала "
@@ -19,19 +18,6 @@ SYSTEM_PROMPT = (
     "Формулировки вопросов и вариантов — на языке исходного материала. "
     "Верни ТОЛЬКО JSON по заданной схеме, без markdown и комментариев."
 )
-
-ANALYZE_SYSTEM_PROMPT = (
-    "Ты — методист. Тебе дают текст загруженных пользователем документов. "
-    "Определи, какие категории информации в нём есть:\n"
-    "- material: учебная теория, конспект, параграф — то, по содержанию чего можно спросить;\n"
-    "- specification: спецификация/кодификатор экзамена — описание структуры работы, "
-    "перечень тем и элементов содержания, типы и число заданий, уровни сложности, критерии;\n"
-    "- sample: образец варианта, демоверсия, примеры конкретных заданий.\n"
-    "Один документ может содержать несколько категорий сразу. "
-    "Извлеки структуру экзамена, список тем/элементов содержания, типы заданий и примеры "
-    "заданий, если они есть. Верни ТОЛЬКО JSON по заданной схеме, без markdown."
-)
-
 
 VISION_SYSTEM_PROMPT = (
     "Ты аккуратно переносишь содержимое страницы документа в Markdown. "
@@ -67,21 +53,6 @@ def _strictify(node):
 
 # JSON-схемы — передаются модели через response_format=json_schema
 QUIZ_JSON_SCHEMA = _strictify(Quiz.model_json_schema())
-ANALYSIS_JSON_SCHEMA = _strictify(SourceAnalysis.model_json_schema())
-
-
-def _format_analysis(a: SourceAnalysis) -> str:
-    """Человекочитаемая врезка про экзамен для промпта генерации."""
-    lines = [f"Что это за материал: {a.summary}"]
-    if a.exam_structure:
-        lines.append(f"Структура экзамена: {a.exam_structure}")
-    if a.topics:
-        lines.append("Темы / элементы содержания:\n- " + "\n- ".join(a.topics))
-    if a.task_types:
-        lines.append("Типы заданий: " + ", ".join(a.task_types))
-    if a.sample_tasks:
-        lines.append("Примеры заданий из образца варианта:\n- " + "\n- ".join(a.sample_tasks))
-    return "\n".join(lines)
 
 
 def build_user_prompt(
@@ -89,31 +60,35 @@ def build_user_prompt(
     num_questions: int,
     types: list[str],
     topics: str | None,
-    analysis: SourceAnalysis | None = None,
+    source_kinds: list[SourceKind],
 ) -> str:
-    spec_like = analysis is not None and (
-        SourceKind.specification in analysis.kinds or SourceKind.sample in analysis.kinds
-    )
-    has_material = analysis is None or SourceKind.material in analysis.kinds
+    spec_like = SourceKind.specification in source_kinds or SourceKind.sample in source_kinds
+    has_material = SourceKind.material in source_kinds
 
     parts: list[str] = []
 
     if spec_like:
+        goals = []
+        if SourceKind.specification in source_kinds:
+            goals.append("воспроизводи перечисленные темы и структуру")
+        if SourceKind.sample in source_kinds:
+            goals.append(
+                "действуй по образцу приведённых заданий, придумывай свои условия и числа"
+            )
         parts.append(
             "ВАЖНО: приложенный документ — это не учебная теория, а описание экзамена "
             "(его структура, перечень тем и/или образец варианта). "
             "Не задавай вопросы про сам документ (сроки, регламент, число баллов, авторов). "
             f"Твоя задача — составить НОВЫЙ тест из {num_questions} заданий, который "
-            "воспроизводит темы, типы заданий и уровень сложности описанного экзамена, "
-            "по образцу приведённого варианта. Придумывай свои условия и числа, "
-            "равномерно покрывая перечисленные темы."
+            "воспроизводит темы, типы заданий и уровень сложности описанного экзамена: "
+            + "; ".join(goals)
+            + ". Равномерно покрывай темы."
         )
         if has_material:
             parts.append(
                 "Если в документе есть и теоретический материал — опирайся на него как на "
                 "источник фактов, но вопросы всё равно строй в формате заданий экзамена."
             )
-        parts.append(_format_analysis(analysis))
         parts.append(f"\nПолный текст документа для справки:\n\"\"\"\n{context}\n\"\"\"")
     else:
         parts.append(f"Материал:\n\"\"\"\n{context}\n\"\"\"")
@@ -243,37 +218,18 @@ async def transcribe_page(png_bytes: bytes, page_no: int) -> str:
         return ""
 
 
-async def analyze_sources(context: str) -> SourceAnalysis:
-    """Предварительный разбор: понять, теория это, спецификация экзамена или образец
-    варианта. При сбое считаем материал обычной теорией (мягкая деградация)."""
-    messages = [
-        {"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Текст документов:\n\"\"\"\n{context}\n\"\"\""},
-    ]
-    fmt = _response_format("source_analysis", ANALYSIS_JSON_SCHEMA)
-    try:
-        raw = await _call_llm(messages, attempt=1, response_format=fmt)
-        analysis = SourceAnalysis.model_validate_json(raw)
-    except (HTTPException, ValidationError, json.JSONDecodeError) as e:
-        log.warning("разбор типа документа не удался (%s) — считаем теорией", e)
-        return SourceAnalysis(kinds=[SourceKind.material], summary="учебный материал")
-    if not analysis.kinds:
-        analysis.kinds = [SourceKind.material]
-    return analysis
-
-
 async def generate_quiz(
     context: str,
     num_questions: int,
     types: list[str],
     topics: str | None,
-    analysis: SourceAnalysis | None = None,
+    source_kinds: list[SourceKind],
 ) -> Quiz:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": build_user_prompt(context, num_questions, types, topics, analysis),
+            "content": build_user_prompt(context, num_questions, types, topics, source_kinds),
         },
     ]
     quiz_format = _response_format("quiz", QUIZ_JSON_SCHEMA)
