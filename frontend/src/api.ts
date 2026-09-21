@@ -2,14 +2,14 @@ import type { GenerateResponse } from "./types";
 
 export async function generateQuiz(params: {
   files: File[];
-  numQuestions: number;
+  numQuestions: number | null;
   questionTypes: string[];
   topics: string;
   sourceKinds: string[];
 }): Promise<GenerateResponse> {
   const fd = new FormData();
   params.files.forEach((f) => fd.append("files", f));
-  fd.append("num_questions", String(params.numQuestions));
+  if (params.numQuestions !== null) fd.append("num_questions", String(params.numQuestions));
   fd.append("question_types", params.questionTypes.join(","));
   fd.append("source_kinds", params.sourceKinds.join(","));
   if (params.topics.trim()) fd.append("topics", params.topics.trim());
