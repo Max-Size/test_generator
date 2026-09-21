@@ -1,5 +1,10 @@
 export type QuestionType = "single" | "multiple" | "true_false" | "short";
 
+export interface Diagram {
+  image_base64: string;
+  alt_text: string;
+}
+
 export interface Question {
   id: number;
   type: QuestionType;
@@ -8,6 +13,7 @@ export interface Question {
   correct_indexes: number[];
   correct_text: string | null;
   explanation: string | null;
+  diagram: Diagram | null;
 }
 
 export interface Quiz {

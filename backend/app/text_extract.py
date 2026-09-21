@@ -21,15 +21,36 @@ from docx import Document
 from fastapi import HTTPException
 
 from .config import settings
-from .llm import transcribe_page
+from .llm import PageTranscription, transcribe_page
 from .obs import log
 from .schemas import TruncatedFile
 from .text_clean import clean_markdown, page_has_symbol_font, page_text_from_dict
 
 
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def _cache_file(data: bytes) -> Path:
-    digest = hashlib.sha256(data).hexdigest()
-    return Path(settings.ingest_cache_dir) / f"{digest}.md"
+    return Path(settings.ingest_cache_dir) / f"{_digest(data)}.md"
+
+
+def _diagrams_dir(data: bytes) -> Path:
+    return Path(settings.ingest_cache_dir) / f"{_digest(data)}.diagrams"
+
+
+def _crop_diagram(pix: "pymupdf.Pixmap", bbox: list[float]) -> bytes | None:
+    """Вырезать bbox (доли 0..1) из пиксмапа; None, если площадь после клампа нулевая."""
+    if len(bbox) != 4:
+        return None
+    x0, y0, x1, y1 = (min(max(v, 0.0), 1.0) for v in bbox)
+    left, right = round(min(x0, x1) * pix.width), round(max(x0, x1) * pix.width)
+    top, bottom = round(min(y0, y1) * pix.height), round(max(y0, y1) * pix.height)
+    if right <= left or bottom <= top:
+        return None
+    crop = pymupdf.Pixmap(pix.colorspace, pymupdf.IRect(left, top, right, bottom), pix.alpha)
+    crop.copy(pix, pymupdf.IRect(left, top, right, bottom))
+    return crop.tobytes("png")
 
 
 def _page_needs_vision(page: "pymupdf.Page", text: str) -> bool:
@@ -43,7 +64,7 @@ def _page_needs_vision(page: "pymupdf.Page", text: str) -> bool:
     )
 
 
-async def _from_pdf(data: bytes) -> str:
+async def _from_pdf(data: bytes) -> tuple[str, dict[str, bytes]]:
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
         chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, show_progress=False)
@@ -71,23 +92,36 @@ async def _from_pdf(data: bytes) -> str:
             if _page_needs_vision(doc[i], md_text):
                 heavy.append(i)
 
+        diagrams: dict[str, bytes] = {}
+        prefix = _digest(data)[:8]
         if heavy:
             sem = asyncio.Semaphore(settings.vision_concurrency)
 
-            async def _recognize(idx: int) -> tuple[int, str]:
-                png = doc[idx].get_pixmap(dpi=settings.vision_dpi).tobytes("png")
+            async def _recognize(idx: int) -> tuple[int, PageTranscription, "pymupdf.Pixmap"]:
+                pix = doc[idx].get_pixmap(dpi=settings.vision_dpi)
                 async with sem:
-                    return idx, await transcribe_page(png, idx + 1)
+                    return idx, await transcribe_page(pix.tobytes("png"), idx + 1), pix
 
             log.info("pdf: %d страниц в vision (параллельно по %d)",
                      len(heavy), settings.vision_concurrency)
-            for idx, recognized in await asyncio.gather(*(_recognize(i) for i in heavy)):
-                if recognized.strip():
-                    log.info("pdf стр. %d: распознана vision-моделью (%d симв.)",
-                             idx + 1, len(recognized))
-                    pages_md[idx] = recognized.strip()
+            for idx, tr, pix in await asyncio.gather(*(_recognize(i) for i in heavy)):
+                md = tr.markdown.strip()
+                if not md:
+                    continue
+                log.info("pdf стр. %d: распознана vision-моделью (%d симв.)", idx + 1, len(md))
+                for d in tr.diagrams[: settings.vision_max_diagrams_per_page]:
+                    png = _crop_diagram(pix, d.bbox)
+                    if png is None:
+                        log.warning("pdf стр. %d: рисунок %s с вырожденным bbox пропущен",
+                                    idx + 1, d.id)
+                        continue
+                    # id уникален в рамках файла и страницы, а не только страницы
+                    new_id = f"{prefix}_p{idx + 1}_{d.id}"
+                    md = md.replace(f"diagram_id={d.id}]", f"diagram_id={new_id}]")
+                    diagrams[new_id] = png
+                pages_md[idx] = md
 
-        return "\n\n".join(p for p in pages_md if p)
+        return "\n\n".join(p for p in pages_md if p), diagrams
     finally:
         doc.close()
 
@@ -102,17 +136,20 @@ def _from_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def extract_text(filename: str, data: bytes) -> str:
+async def extract_text(filename: str, data: bytes) -> tuple[str, dict[str, bytes]]:
     name = filename.lower()
 
     cache = _cache_file(data)
     if cache.exists():
         log.info("извлечение %s взято из кэша (%s)", filename, cache.name)
-        return cache.read_text(encoding="utf-8")
+        ddir = _diagrams_dir(data)
+        diagrams = {f.stem: f.read_bytes() for f in ddir.glob("*.png")} if ddir.is_dir() else {}
+        return cache.read_text(encoding="utf-8"), diagrams
 
+    diagrams: dict[str, bytes] = {}
     try:
         if name.endswith(".pdf"):
-            text = await _from_pdf(data)
+            text, diagrams = await _from_pdf(data)
         elif name.endswith(".docx"):
             text = _from_docx(data)
         elif name.endswith((".txt", ".md")):
@@ -125,8 +162,13 @@ async def extract_text(filename: str, data: bytes) -> str:
         raise HTTPException(422, f"не удалось прочитать {filename}: {e}")
 
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(text, encoding="utf-8")
-    return text
+    if diagrams:
+        ddir = _diagrams_dir(data)
+        ddir.mkdir(parents=True, exist_ok=True)
+        for did, png in diagrams.items():
+            (ddir / f"{did}.png").write_bytes(png)
+    cache.write_text(text, encoding="utf-8")  # .md последним: он маркер целостного кэша
+    return text, diagrams
 
 
 def combine(parts: list[tuple[str, str]], limit: int) -> tuple[str, list[TruncatedFile]]:

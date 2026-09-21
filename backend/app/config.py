@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     vision_max_pages: int = 20
     # Сколько страниц распознаём параллельно (одновременных запросов к vision-модели)
     vision_concurrency: int = 4
+    # Максимум диаграмм, принимаемых с одной страницы
+    vision_max_diagrams_per_page: int = 5
     # Порог: страницы, где текстом извлечено меньше символов, считаем «тяжёлыми»
     vision_min_text_chars: int = 200
 

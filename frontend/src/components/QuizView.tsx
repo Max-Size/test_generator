@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Question, Quiz } from "../types";
 import RichText from "./RichText";
+import QuestionDiagram from "./QuestionDiagram";
 
 type Answers = Record<number, number[] | string>;
 
@@ -53,6 +54,7 @@ export default function QuizView({ quiz }: { quiz: Quiz }) {
             <p className="font-medium text-slate-800">
               {n + 1}. <RichText>{q.text}</RichText>
             </p>
+            <QuestionDiagram diagram={q.diagram} />
 
             <div className="mt-3 space-y-2">
               {q.type === "short" ? (

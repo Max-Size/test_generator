@@ -1,3 +1,5 @@
+import base64
+import re
 import time
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -6,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .llm import generate_quiz
 from .obs import log, new_request_id, setup_logging, stage
-from .schemas import GenerateResponse, Quiz, SourceKind
+from .schemas import Diagram, GenerateResponse, Quiz, SourceKind
 from .text_extract import combine, extract_text
 
 setup_logging()
@@ -22,6 +24,7 @@ app.add_middleware(
 
 ALL_TYPES = ["single", "multiple", "true_false", "short"]
 DEFAULT_NUM_QUESTIONS = 10
+_PLACEHOLDER_RE = re.compile(r"\[Рисунок:\s*(.*?)\s*\|\s*diagram_id=([^\]\s]+)\s*\]", re.DOTALL)
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -75,6 +78,7 @@ async def generate(
 
     max_file_bytes = settings.max_file_size_mb * 1024 * 1024
     parts: list[tuple[str, str]] = []
+    all_diagrams: dict[str, bytes] = {}
     with stage("extract_text", files=len(files)) as st:
         total_bytes = 0
         for f in files:
@@ -87,9 +91,10 @@ async def generate(
                 )
             total_bytes += len(data)
             with stage(f"extract:{name}", bytes=len(data)) as fst:
-                text = await extract_text(name, data)
+                text, diagrams = await extract_text(name, data)
                 fst["chars"] = len(text)
             parts.append((name, text))
+            all_diagrams.update(diagrams)
         st["total_bytes"] = total_bytes
         st["total_chars"] = sum(len(t) for _, t in parts)
 
@@ -116,6 +121,17 @@ async def generate(
             quiz.questions = quiz.questions[: settings.max_questions]
         st["questions"] = len(quiz.questions)
         st["types"] = "/".join(sorted({q.type.value for q in quiz.questions}))
+
+    alt_texts = {did: alt for alt, did in _PLACEHOLDER_RE.findall(context)}
+    for q in quiz.questions:
+        if q.diagram_id and q.diagram_id in all_diagrams:
+            b64 = base64.b64encode(all_diagrams[q.diagram_id]).decode()
+            q.diagram = Diagram(
+                image_base64=f"data:image/png;base64,{b64}",
+                alt_text=alt_texts.get(q.diagram_id, ""),
+            )
+        elif q.diagram_id:
+            log.warning("вопрос %d ссылается на неизвестный diagram_id=%s", q.id, q.diagram_id)
 
     total = time.perf_counter() - req_t0
     log.info(
