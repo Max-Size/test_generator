@@ -7,49 +7,58 @@ status: approved
 
 ## `POST /api/generate`
 
-Контракт запроса и ответа `/api/generate` не меняется — ни pydantic-модели
-(`schemas.py`), ни `types.ts`. Это чисто внутреннее изменение пайплайна:
-промпт генерации + эвристика извлечения текста. Единственное наблюдаемое
-изменение — содержимое строковых полей `Question.text`/`options`/
-`correct_text`/`explanation` теперь чаще содержит LaTeX-разметку
-(`$...$`/`$$...$$`/`\frac{}{}`), которую фронтенд уже умеет рендерить.
+Контракт запроса и ответа не меняется — ни `schemas.py`, ни `types.ts`. Все
+изменения внутренние (маршрутизация страниц PDF в vision, удаление локальной
+эвристики дробей). Наблюдаемый эффект: строковые поля `Question.text`/`options`/
+`correct_text`/`explanation` для математических PDF содержат корректный LaTeX
+(`$...$`/`$$...$$`), который фронтенд уже рендерит.
 
-### `backend/app/llm.py`
+Побочный эффект: на PDF с математикой, картинками или векторной графикой растёт
+число vision-вызовов (по одному на страницу, до `vision_max_pages`), а значит
+время и стоимость извлечения. Ошибки vision по-прежнему не роняют запрос —
+страница откатывается на обычный локальный текст.
 
-`SYSTEM_PROMPT` дополняется (точная формулировка на усмотрение backend-dev,
-смысл обязателен):
+## `backend/app/text_extract.py`
 
-```python
-SYSTEM_PROMPT = (
-    "... (текущий текст) ..."
-    "Математические выражения (дроби, степени, корни, формулы) записывай в "
-    "LaTeX: $...$ для строчных, $$...$$ для выключных. Дроби — только через "
-    "\\frac{числитель}{знаменатель}, не как a/b."
-)
-```
-
-### `backend/app/text_clean.py`
-
-`page_text_from_dict(page)` дополняется восстановлением дробей по векторной
-черте (см. `spec.md`, раздел Solution п.2). Новая внутренняя функция, например:
+Сигнатура `_page_needs_vision(page, text) -> bool` не меняется; страница
+считается "чисто текстовой" (False), только если нет ничего из перечисленного:
 
 ```python
-def _reconstruct_fractions(page: "pymupdf.Page", paragraphs: list[str]) -> list[str]:
-    """Найти горизонтальные векторные линии-черты дроби (page.get_drawings()),
-    сгруппировать текстовые span'ы над/под каждой в числитель/знаменатель и
-    заменить их на \\frac{...}{...} в $...$. Неоднозначные случаи (несколько
-    близких черт, отсутствие однозначной группы сверху или снизу) — не трогать,
-    вернуть исходный текст без изменений для этого места."""
+def _page_needs_vision(page: "pymupdf.Page", text: str) -> bool:
+    if not settings.vision_enabled:
+        return False
+    return (
+        len(text.strip()) < settings.vision_min_text_chars
+        or bool(page.get_images())
+        or page_has_symbol_font(page)
+        or bool(page.get_drawings())
+    )
 ```
 
-Сигнатуры существующих публичных функций (`page_text_from_dict`,
-`clean_markdown`, `remap_symbol_chars`) не меняются — эвристика встраивается
-внутрь текущего прохода по `blocks`/`lines`/`spans`, либо как отдельный шаг
-после сборки параграфов, на усмотрение backend-dev.
+`_from_pdf` менять не обязательно: локальный текст Symbol-страниц
+(`clean_markdown(page_text_from_dict(page))`) и остальных страниц
+(`pymupdf4llm`) собирается до выбора страниц для vision и служит fallback'ом;
+`pages_md[idx] = recognized.strip()` заменяет его только при непустом ответе.
+Новые настройки в `config.py` не добавляются.
+
+## `backend/app/text_clean.py` и `backend/tests/test_text_clean.py`
+
+Удалить код PR #5: `_find_fractions` и всё, что она добавила в
+`page_text_from_dict` (`_anchor`, `_fracs`, потребление span'ов, вставка
+`$\frac{}{}$`), и соответствующие тесты. Публичные сигнатуры
+`page_text_from_dict(page)`, `clean_markdown`, `remap_symbol_chars`,
+`page_has_symbol_font` не меняются; поведение `page_text_from_dict` — как на
+`main`. Ориентир: `git diff main...feature/latex-math-fidelity --
+backend/app/text_clean.py backend/tests/test_text_clean.py` должен стать пустым.
+
+## `backend/app/llm.py`
+
+Без изменений относительно PR #5: `SYSTEM_PROMPT` сохраняет LaTeX-инструкцию.
+`VISION_SYSTEM_PROMPT` не меняется (если проверка на демо-PDF не покажет
+необходимость — см. spec.md, п. 4).
 
 ## Frontend touchpoints
 
 Изменений нет. `frontend/src/components/RichText.tsx` уже поддерживает
-`$...$`/`$$...$$`/`\(...\)`/`\[...\]` — никакой доработки не требуется. Это
-явно фиксируется здесь, чтобы `frontend-dev` не начал искать задачу на своей
-стороне для этого слага.
+`$...$`/`$$...$$`/`\(...\)`/`\[...\]`. `frontend-dev` для этого слага делать
+нечего.
