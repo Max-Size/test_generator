@@ -104,35 +104,74 @@ def _find_fractions(page: "pymupdf.Page", lines: list[dict]) -> list[tuple[dict,
         return []
     all_spans = [s for ln in lines for s in ln.get("spans", []) if s.get("text", "").strip()]
     result: list[tuple[dict, str, list[dict]]] = []
-    used: set[int] = set()
-    for bar in bars:
+    resolved: set[int] = set()
+    # внутренние (узкие) черты обрабатываются первыми; готовая дробь становится синтетическим span'ом
+    for bar in sorted(bars, key=lambda r: r.width):
         y = (bar.y0 + bar.y1) / 2
-        others = [b for b in bars if b is not bar and b.x0 < bar.x1 and b.x1 > bar.x0]
+        others = [
+            b for b in bars
+            if b is not bar and id(b) not in resolved and b.x0 < bar.x1 and b.x1 > bar.x0
+            and not (b.x0 <= bar.x0 and b.x1 >= bar.x1 and b.width > bar.width + 4)
+        ]
         if any(abs((b.y0 + b.y1) / 2 - y) < 40 for b in others):
             continue  # несколько близких черт — неоднозначно
         in_x = [s for s in all_spans if bar.x0 - 1 <= (s["bbox"][0] + s["bbox"][2]) / 2 <= bar.x1 + 1]
         above = [s for s in in_x if s["bbox"][3] <= y + 1 and y - s["bbox"][3] < 1.5 * s["size"]]
         below = [s for s in in_x if s["bbox"][1] >= y - 1 and s["bbox"][1] - y < 1.5 * s["size"]]
-        if not above or not below or any(id(s) in used for s in above + below):
+        for side in (above, below):
+            synth = [s for s in side if "_real" in s]
+            if synth:  # знак между вложенными дробями лежит на уровне их черты
+                lo = min(s["bbox"][1] for s in synth)
+                hi = max(s["bbox"][3] for s in synth)
+                for s in in_x:
+                    if s not in side and lo <= (s["bbox"][1] + s["bbox"][3]) / 2 <= hi:
+                        side.append(s)
+        if not above or not below:
             continue
-        # каждая сторона — одна текстовая строка
-        if max(s["bbox"][3] for s in above) - min(s["bbox"][3] for s in above) > 0.5 * above[0]["size"]:
+        plain_a = [s for s in above if "_real" not in s]
+        plain_b = [s for s in below if "_real" not in s]
+        # каждая сторона — одна текстовая строка (вложенные дроби не сравниваем)
+        if len(plain_a) == len(above) and (
+            max(s["bbox"][3] for s in above) - min(s["bbox"][3] for s in above) > 0.5 * above[0]["size"]
+        ):
             continue
-        if max(s["bbox"][1] for s in below) - min(s["bbox"][1] for s in below) > 0.5 * below[0]["size"]:
+        if len(plain_b) == len(below) and (
+            max(s["bbox"][1] for s in below) - min(s["bbox"][1] for s in below) > 0.5 * below[0]["size"]
+        ):
             continue
-        num, den = _span_text(above), _span_text(below)
-        consumed = {id(s) for s in above + below}
+        num, den = _span_text(above).replace("$", ""), _span_text(below).replace("$", "")  # $ вложенных дробей
+        real = [r for s in above + below for r in s.get("_real", [s])]
+        consumed = {id(s) for s in real}
         anchors = [
             ln for ln in lines
             if ln["bbox"][1] < y < ln["bbox"][3]
             and not any(id(s) in consumed for s in ln.get("spans", []))
         ]
-        if not num or not den or len(anchors) != 1:
+        if not num or not den:
             continue
-        used |= consumed
-        result.append((anchors[0], f"$\\frac{{{num}}}{{{den}}}$", above + below))
-        anchors[0].setdefault("_fracs", []).append(((bar.x0 + bar.x1) / 2, f"$\\frac{{{num}}}{{{den}}}$"))
-    return result
+        latex = f"$\\frac{{{num}}}{{{den}}}$"
+        # вложенные дроби поглощаются внешней
+        for s in above + below:
+            if "_res" in s:
+                result.remove(s["_res"])
+                if s["_anchor"] is not None:
+                    s["_anchor"]["_fracs"].remove(s["_fx"])
+        all_spans = [s for s in all_spans if s not in above and s not in below]
+        anchor = anchors[0] if len(anchors) == 1 else None  # у вложенной дроби якоря может не быть
+        entry = (anchor, latex, real)
+        result.append(entry)
+        fx = ((bar.x0 + bar.x1) / 2, latex)
+        if anchor is not None:
+            anchor.setdefault("_fracs", []).append(fx)
+        resolved.add(id(bar))
+        boxes = [s["bbox"] for s in above + below]
+        all_spans.append({
+            "bbox": (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                     max(b[2] for b in boxes), max(b[3] for b in boxes)),
+            "size": max(s["size"] for s in above + below), "text": latex, "font": "",
+            "_real": real, "_res": entry, "_anchor": anchors[0], "_fx": fx,
+        })
+    return [r for r in result if r[0] is not None]
 
 
 def page_text_from_dict(page: "pymupdf.Page") -> str:
