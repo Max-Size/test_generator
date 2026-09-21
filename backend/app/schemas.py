@@ -11,6 +11,11 @@ class QuestionType(str, Enum):
     short = "short"            # короткий текстовый ответ
 
 
+class Diagram(BaseModel):
+    image_base64: str  # data URL
+    alt_text: str
+
+
 class Question(BaseModel):
     id: int
     type: QuestionType
@@ -22,6 +27,10 @@ class Question(BaseModel):
     # эталонный текст (для short)
     correct_text: str | None = None
     explanation: str | None = None
+    # id рисунка из контекста; заполняет LLM, наружу в API не отдаётся
+    diagram_id: str | None = Field(default=None, exclude=True)
+    # заполняется бэкендом после генерации
+    diagram: Diagram | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "Question":

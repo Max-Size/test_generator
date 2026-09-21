@@ -6,7 +6,7 @@ import time
 
 import httpx
 from fastapi import HTTPException
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .config import settings
 from .obs import log, stage
@@ -18,6 +18,9 @@ SYSTEM_PROMPT = (
     "Формулировки вопросов и вариантов — на языке исходного материала. "
     "Всю математику (дроби, степени, корни, формулы) записывай в LaTeX: $...$ для строчных, "
     "$$...$$ для выключных; дроби только через \\frac{числитель}{знаменатель}, а не a/b. "
+    "Если для ответа на вопрос необходим рисунок, упомянутый в материале как "
+    "[Рисунок: ... | diagram_id=...], укажи этот diagram_id в поле diagram_id вопроса; "
+    "если рисунок не нужен — diagram_id = null. "
     "Верни ТОЛЬКО JSON по заданной схеме, без markdown и комментариев."
 )
 
@@ -25,10 +28,26 @@ VISION_SYSTEM_PROMPT = (
     "Ты аккуратно переносишь содержимое страницы документа в Markdown. "
     "Сохраняй заголовки, списки, порядок абзацев и таблицы (Markdown-таблицами). "
     "Математические формулы записывай в LaTeX: $...$ для строчных, $$...$$ для выключных. "
-    "Каждый график, диаграмму, чертёж или иллюстрацию описывай словами в квадратных "
-    "скобках: [Рисунок: ...] — с подписями, обозначениями осей и числовыми значениями. "
-    "Не добавляй ничего, чего нет на странице. Верни только Markdown, без пояснений."
+    "Каждый график, диаграмму, чертёж или иллюстрацию (включая числовую прямую) описывай "
+    "словами в квадратных скобках — с подписями, обозначениями осей и числовыми значениями — "
+    "и добавь объект в diagrams: id (например d1, уникален на странице), краткий alt_text и "
+    "приблизительный bbox [x0, y0, x1, y1] в долях размеров страницы (0..1). "
+    "В markdown на месте рисунка вставь плейсхолдер "
+    "[Рисунок: <alt_text> | diagram_id=<id>]. "
+    "Не добавляй ничего, чего нет на странице. "
+    "Верни ТОЛЬКО JSON по заданной схеме: поле markdown и список diagrams."
 )
+
+
+class PageDiagram(BaseModel):
+    id: str
+    alt_text: str
+    bbox: list[float]  # [x0, y0, x1, y1], доли размеров страницы, 0..1
+
+
+class PageTranscription(BaseModel):
+    markdown: str
+    diagrams: list[PageDiagram] = Field(default_factory=list)
 
 
 def _strictify(node):
@@ -54,7 +73,16 @@ def _strictify(node):
 
 
 # JSON-схемы — передаются модели через response_format=json_schema
-QUIZ_JSON_SCHEMA = _strictify(Quiz.model_json_schema())
+def _quiz_schema() -> dict:
+    schema = Quiz.model_json_schema()
+    # diagram заполняет бэкенд, модель его не видит
+    schema["$defs"]["Question"]["properties"].pop("diagram", None)
+    schema["$defs"].pop("Diagram", None)
+    return _strictify(schema)
+
+
+QUIZ_JSON_SCHEMA = _quiz_schema()
+PAGE_JSON_SCHEMA = _strictify(PageTranscription.model_json_schema())
 
 
 def build_user_prompt(
@@ -205,9 +233,9 @@ async def _call_llm(
     return content
 
 
-async def transcribe_page(png_bytes: bytes, page_no: int) -> str:
-    """Распознать одну страницу PDF (PNG) в Markdown через vision-модель.
-    При сбое возвращает пустую строку — вызывающий код откатится на текстовый слой."""
+async def transcribe_page(png_bytes: bytes, page_no: int) -> PageTranscription:
+    """Распознать одну страницу PDF (PNG) в Markdown + список рисунков через vision-модель.
+    При сбое возвращает пустую транскрипцию — вызывающий код откатится на текстовый слой."""
     b64 = base64.b64encode(png_bytes).decode()
     messages = [
         {"role": "system", "content": VISION_SYSTEM_PROMPT},
@@ -220,10 +248,16 @@ async def transcribe_page(png_bytes: bytes, page_no: int) -> str:
         },
     ]
     try:
-        return await _call_llm(messages, attempt=1, model=settings.vision_model)
+        raw = await _call_llm(
+            messages, attempt=1, response_format=_response_format("page", PAGE_JSON_SCHEMA),
+            model=settings.vision_model,
+        )
+        return PageTranscription.model_validate_json(raw)
     except HTTPException as e:
         log.warning("vision-распознавание страницы %d не удалось: %s", page_no, e.detail)
-        return ""
+    except (ValidationError, json.JSONDecodeError) as e:
+        log.warning("vision-ответ для страницы %d невалиден: %s", page_no, str(e).splitlines()[0])
+    return PageTranscription(markdown="", diagrams=[])
 
 
 async def generate_quiz(
