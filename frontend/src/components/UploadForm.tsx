@@ -15,7 +15,7 @@ const SOURCE_KIND_OPTIONS: { value: string; label: string }[] = [
 
 export interface FormValues {
   files: File[];
-  numQuestions: number;
+  numQuestions: number | null;
   questionTypes: string[];
   topics: string;
   sourceKinds: string[];
@@ -30,6 +30,7 @@ export default function UploadForm({
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [numQuestions, setNumQuestions] = useState(10);
+  const [autoCount, setAutoCount] = useState(true);
   const [questionTypes, setQuestionTypes] = useState<string[]>(["single", "true_false"]);
   const [topics, setTopics] = useState("");
   const [sourceKinds, setSourceKinds] = useState<string[]>(["material"]);
@@ -44,6 +45,9 @@ export default function UploadForm({
       prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v],
     );
 
+  const hasSample = sourceKinds.includes("sample");
+  const useAuto = autoCount && hasSample;
+
   const canSubmit = files.length > 0 && questionTypes.length > 0 && sourceKinds.length > 0 && !loading;
 
   return (
@@ -51,7 +55,7 @@ export default function UploadForm({
       className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onSubmit({ files, numQuestions, questionTypes, topics, sourceKinds });
+        if (canSubmit) onSubmit({ files, numQuestions: useAuto ? null : numQuestions, questionTypes, topics, sourceKinds });
       }}
     >
       <div>
@@ -98,19 +102,32 @@ export default function UploadForm({
         </p>
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
-          Количество вопросов: {numQuestions}
+      {hasSample && (
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={autoCount}
+            onChange={(e) => setAutoCount(e.target.checked)}
+          />
+          Определить количество по образцу
         </label>
-        <input
-          type="range"
-          min={1}
-          max={30}
-          value={numQuestions}
-          onChange={(e) => setNumQuestions(Number(e.target.value))}
-          className="w-full"
-        />
-      </div>
+      )}
+
+      {!useAuto && (
+  <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Количество вопросов: {numQuestions}
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={30}
+            value={numQuestions}
+            onChange={(e) => setNumQuestions(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
+      )}
 
       <div>
         <span className="mb-1 block text-sm font-medium text-slate-700">Типы вопросов</span>

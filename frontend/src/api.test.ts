@@ -74,3 +74,19 @@ describe("generateQuiz", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("generateQuiz numQuestions null", () => {
+  it("does not append num_questions", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+    await generateQuiz({
+      files: [],
+      numQuestions: null,
+      questionTypes: ["single"],
+      topics: "",
+      sourceKinds: ["sample"],
+    });
+    const body = fetchMock.mock.calls[0][1].body as FormData;
+    expect(body.has("num_questions")).toBe(false);
+  });
+});
