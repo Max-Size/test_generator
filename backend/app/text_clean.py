@@ -82,22 +82,85 @@ def page_has_symbol_font(page: "pymupdf.Page") -> bool:
     return False
 
 
+def _span_text(spans: list[dict]) -> str:
+    spans = sorted(spans, key=lambda s: s["bbox"][0])
+    return " ".join(
+        t for t in (remap_symbol_chars(s.get("text", ""), s.get("font", "")).strip() for s in spans) if t
+    )
+
+
+def _find_fractions(page: "pymupdf.Page", lines: list[dict]) -> list[tuple[dict, str, list[dict]]]:
+    """Найти дроби по горизонтальным векторным чертам.
+
+    Возвращает (линия-якорь, "$\\frac{..}{..}$", потреблённые span'ы). Неоднозначные
+    случаи (близкие черты, нет строки-якоря, пустой числитель/знаменатель) пропускаются.
+    """
+    bars = []
+    for d in page.get_drawings():
+        r = d["rect"]
+        if r.height <= 1.5 and r.width >= 5:
+            bars.append(r)
+    if not bars:
+        return []
+    all_spans = [s for ln in lines for s in ln.get("spans", []) if s.get("text", "").strip()]
+    result: list[tuple[dict, str, list[dict]]] = []
+    used: set[int] = set()
+    for bar in bars:
+        y = (bar.y0 + bar.y1) / 2
+        others = [b for b in bars if b is not bar and b.x0 < bar.x1 and b.x1 > bar.x0]
+        if any(abs((b.y0 + b.y1) / 2 - y) < 40 for b in others):
+            continue  # несколько близких черт — неоднозначно
+        in_x = [s for s in all_spans if bar.x0 - 1 <= (s["bbox"][0] + s["bbox"][2]) / 2 <= bar.x1 + 1]
+        above = [s for s in in_x if s["bbox"][3] <= y + 1 and y - s["bbox"][3] < 1.5 * s["size"]]
+        below = [s for s in in_x if s["bbox"][1] >= y - 1 and s["bbox"][1] - y < 1.5 * s["size"]]
+        if not above or not below or any(id(s) in used for s in above + below):
+            continue
+        # каждая сторона — одна текстовая строка
+        if max(s["bbox"][3] for s in above) - min(s["bbox"][3] for s in above) > 0.5 * above[0]["size"]:
+            continue
+        if max(s["bbox"][1] for s in below) - min(s["bbox"][1] for s in below) > 0.5 * below[0]["size"]:
+            continue
+        num, den = _span_text(above), _span_text(below)
+        consumed = {id(s) for s in above + below}
+        anchors = [
+            ln for ln in lines
+            if ln["bbox"][1] < y < ln["bbox"][3]
+            and not any(id(s) in consumed for s in ln.get("spans", []))
+        ]
+        if not num or not den or len(anchors) != 1:
+            continue
+        used |= consumed
+        result.append((anchors[0], f"$\\frac{{{num}}}{{{den}}}$", above + below))
+        anchors[0].setdefault("_fracs", []).append(((bar.x0 + bar.x1) / 2, f"$\\frac{{{num}}}{{{den}}}$"))
+    return result
+
+
 def page_text_from_dict(page: "pymupdf.Page") -> str:
-    """Собрать текст страницы с ремапом Symbol и восстановлением индексов."""
+    """Собрать текст страницы с ремапом Symbol, восстановлением индексов и дробей."""
     data = page.get_text("dict")
+    all_lines = [ln for b in data.get("blocks", []) if b.get("type") == 0 for ln in b.get("lines", [])]
+    consumed_ids = {id(s) for _, _, sp in _find_fractions(page, all_lines) for s in sp}
     paragraphs: list[str] = []
     for block in data.get("blocks", []):
         if block.get("type") != 0:
             continue
         lines: list[str] = []
         for line in block.get("lines", []):
-            spans = line.get("spans", [])
+            all_spans = line.get("spans", [])
+            fracs = line.get("_fracs", [])
+            spans = [s for s in all_spans if id(s) not in consumed_ids]
+            if not spans and not fracs:
+                continue
             if not spans:
+                lines.append(" ".join(f for _, f in fracs))
                 continue
             body = max(s["size"] for s in spans)
             baseline = max(s["bbox"][3] for s in spans if s["size"] >= 0.9 * body)
             parts: list[str] = []
+            pending = sorted(fracs)
             for s in spans:
+                while pending and pending[0][0] < (s["bbox"][0] + s["bbox"][2]) / 2:
+                    parts.append(f" {pending.pop(0)[1]} ")
                 raw = remap_symbol_chars(s.get("text", ""), s.get("font", ""))
                 core = raw.strip()
                 if not core:
@@ -112,6 +175,7 @@ def page_text_from_dict(page: "pymupdf.Page") -> str:
                     parts.append(_wrap("_", core) + (" " if raw.endswith(" ") else ""))
                 else:
                     parts.append(raw)
+            parts.extend(f" {f} " for _, f in pending)
             lines.append("".join(parts))
         para = " ".join(x.strip() for x in lines if x.strip())
         if para:
