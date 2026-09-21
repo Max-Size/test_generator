@@ -35,17 +35,6 @@ export default function App() {
 
         {result && (
           <div className="mt-8">
-            {result.analysis &&
-              (result.analysis.kinds.includes("specification") ||
-                result.analysis.kinds.includes("sample")) && (
-                <p className="mb-3 rounded-md bg-indigo-50 p-3 text-xs text-indigo-700">
-                  Документ распознан как спецификация экзамена / образец варианта — тест
-                  составлен по темам и формату экзамена
-                  {result.analysis.topics.length > 0 &&
-                    ` (${result.analysis.topics.length} тем)`}
-                  .
-                </p>
-              )}
             {result.truncated && (
               <ul className="mb-3 rounded-md bg-amber-50 p-3 text-xs text-amber-600">
                 {(result.truncated_files ?? []).map((f) => (

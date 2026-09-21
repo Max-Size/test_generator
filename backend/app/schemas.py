@@ -50,20 +50,6 @@ class SourceKind(str, Enum):
     sample = "sample"                # образец варианта / примеры заданий
 
 
-class SourceAnalysis(BaseModel):
-    """Результат предварительного разбора загруженных документов.
-
-    Один файл может содержать сразу несколько категорий информации
-    (например, спецификация + образец варианта), поэтому kinds — список.
-    """
-    kinds: list[SourceKind]
-    summary: str                       # чем является материал в целом
-    exam_structure: str | None = None  # описание структуры экзамена (если есть спецификация)
-    topics: list[str] = Field(default_factory=list)       # темы / элементы содержания
-    task_types: list[str] = Field(default_factory=list)   # типы заданий по образцу/спецификации
-    sample_tasks: list[str] = Field(default_factory=list)  # примеры заданий из образца варианта
-
-
 class TruncatedFile(BaseModel):
     filename: str
     reason: Literal["partial", "dropped"]
@@ -74,4 +60,3 @@ class GenerateResponse(BaseModel):
     source_chars: int
     truncated: bool
     truncated_files: list[TruncatedFile] = Field(default_factory=list)
-    analysis: SourceAnalysis | None = None
