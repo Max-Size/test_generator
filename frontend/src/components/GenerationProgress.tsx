@@ -12,23 +12,35 @@ function extractDetailText(d: ExtractDetail): string | null {
 }
 
 export default function GenerationProgress({ progress }: { progress: ProgressState | null }) {
-  if (!progress) return null;
-  const currentIdx = STEPS.findIndex((s) => s.stage === progress.stage);
-  const detailText = progress.stage === "extract" ? extractDetailText(progress.detail) : progress.detail;
+  const currentIdx = progress ? STEPS.findIndex((s) => s.stage === progress.stage) : -1;
+  const detailText =
+    progress?.stage === "extract"
+      ? extractDetailText(progress.detail)
+      : progress?.stage === "generate"
+        ? progress.detail
+        : null;
 
   return (
-    <ul className="mt-4 space-y-1.5 rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
-      {STEPS.map((s, i) => (
-        <li key={s.stage} className={i > currentIdx ? "text-slate-400" : "text-slate-900"}>
-          <span className="font-medium">
-            {i < currentIdx ? "✓ " : i === currentIdx ? "⋯ " : "○ "}
-            {s.label}
-          </span>
-          {i === currentIdx && detailText && (
-            <div className="ml-4 text-xs text-slate-500">{detailText}</div>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="loading glass1" role="status" aria-live="polite">
+      <div className="skel" aria-hidden="true" />
+      <div className="ring" aria-hidden="true" />
+      <p className="drop-title">Генерируем тест…</p>
+      <ul className="stages">
+        {STEPS.map((s, i) => {
+          const state = i < currentIdx ? "done" : i === currentIdx ? "active" : "pending";
+          return (
+            <li key={s.stage} className={`stage ${state}`}>
+              <span className="st-ic" aria-hidden="true">
+                {state === "done" ? "✓" : ""}
+              </span>
+              <span>
+                <div>{s.label}</div>
+                {state === "active" && detailText && <div className="stage-detail">{detailText}</div>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
