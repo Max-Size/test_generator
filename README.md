@@ -114,7 +114,24 @@ routine и вебхуки GitHub не используются — они раб
   worktree и возвращают вердикт `PASS` или `FAIL`;
 - при `FAIL` соответствующий dev чинит по списку замечаний, QA проверяет снова (максимум 2 круга
   на сторону, затем PR помечается `needs-human`);
-- оркестратор открывает **один** PR и оставляет в нём вердикты QA комментариями.
+- когда оба code-QA прошли, `qa-e2e` поднимает бэкенд и фронтенд ветки (порты 8001/5174),
+  прогоняет каждый файл из `test_samples/` через настоящий UI в headless Chromium (Playwright),
+  смотрит скриншоты и выносит вердикт; замечания уходят нужному dev'у (максимум 2 круга);
+- оркестратор открывает **один** PR и оставляет в нём три вердикта QA комментариями.
+
+### E2E-проверка вручную
+
+Делает реальные вызовы LLM (платно, ~1–2 мин на файл):
+```bash
+cd frontend && npx playwright install chromium        # один раз
+cd backend && INGEST_CACHE_DIR=$(mktemp -d) uv run uvicorn app.main:app --port 8001 &
+cd frontend && API_PROXY_TARGET=http://localhost:8001 npx vite --port 5174 --strictPort &
+cd frontend && node e2e/run.mjs --sample ../test_samples/<file> --out /tmp/e2e
+```
+Результат — `/tmp/e2e/result.json` и скриншоты. Новый сценарий = новый файл в `test_samples/`
+плюс, при необходимости, `<имя>.e2e.json` рядом с ним (настройки формы и ожидания к тесту).
+Для облачных сессий среда должна пускать в сеть к CDN Playwright и `polza.ai`, а
+`POLZA_API_KEY` задаётся переменной окружения.
 
 ### 5. Смёржить PR вручную
 

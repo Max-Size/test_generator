@@ -37,7 +37,7 @@ Work inside `$WT`. Remove it when finished: `git worktree remove --force "$WT"`.
 - Does the diff call the contract's endpoints exactly as documented, and do `types.ts` mirror the contract's shapes?
 - `npm ci && npm run lint && npm run test && npm run build` from `$WT/frontend` must be clean.
 - Read the changed components against the spec's user stories/flow — flag anything the diff clearly does not cover, not stylistic preference.
-- If the backend side of this branch can be started, do one end-to-end pass of the main flow against it; otherwise state that you could not.
+- Do not start the app or drive a browser — the separate `qa-e2e` agent does that.
 
 Do not flag style preferences, hypothetical future needs, or anything not traceable to the spec/contract. You are checking conformance, not doing a general code review.
 

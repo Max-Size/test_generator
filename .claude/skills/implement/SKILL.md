@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Implements an approved feature spec end-to-end inside the current session — backend-dev and frontend-dev subagents write the code, two independent QA subagents verify it against the spec, and one PR is opened. Use when the CEO has approved a spec via the analyst and wants the feature built.
+description: Implements an approved feature spec end-to-end inside the current session — backend-dev and frontend-dev subagents write the code, two independent code-QA subagents verify it against the spec, an e2e QA subagent runs the real app in headless Chromium on test_samples/, and one PR is opened. Use when the CEO has approved a spec via the analyst and wants the feature built.
 ---
 
 # /implement <slug>
@@ -46,6 +46,20 @@ Each returns a verdict starting with `QA-VERDICT: PASS` or `QA-VERDICT: FAIL` an
 
 On FAIL for a side: re-invoke that side's dev subagent with the slug **and** QA's itemized findings verbatim ("address only these"), commit the result (`fix(<side>): <slug> — address QA`), then re-run that side's QA. After the second failed round for a side stop looping; that side goes into the PR as unresolved.
 
+## 4b. E2E QA — the real app in a browser
+
+Run only when every touched side ended with code-QA PASS. If any side is unresolved, skip e2e (the PR will be a draft anyway) and say "e2e skipped: code QA unresolved" in the PR body.
+
+No push is needed — `qa-e2e` works from a local worktree of `feature/<slug>`. Launch one `qa-e2e` subagent. Prompt: **exactly** `Feature slug "<slug>", branch "feature/<slug>".` — same rule as code QA: no summary of the implementation, no hints.
+
+It returns `QA-VERDICT: PASS|FAIL`; each FAIL item is tagged `[backend]`, `[frontend]`, `[unclear]` or `[env]`.
+
+On FAIL (max 2 rounds total):
+- `[env]` items are not code problems — do not send them to devs. If the verdict is FAIL **only** because of `[env]`, stop the e2e loop and carry it into the PR as "e2e could not run: <reason>".
+- `[backend]` items → `backend-dev`, `[frontend]` items → `frontend-dev`, `[unclear]` items → both, each with the slug and the items verbatim ("address only these"). Run the needed devs in parallel, commit per side (`fix(<side>): <slug> — address e2e QA`).
+- Re-run code QA for every side that changed, then re-run `qa-e2e`. A code-QA FAIL here goes back to step 4 rules for that side.
+- After the second failed e2e round, stop; e2e goes into the PR as unresolved.
+
 ## 5. Open the PR
 
 ```
@@ -54,12 +68,12 @@ gh pr create --base main --title "<slug>: <short description>" --body "..."
 ```
 Body: one-paragraph summary; a checklist mapping every acceptance criterion in `spec.md` to what was done; the lint/test/build results per side; any dev "known failing checks"; any conservative choices the devs made on ambiguity.
 
-Then post each QA verdict as its own PR comment starting with `QA (backend):` / `QA (frontend):`.
+Then post each QA verdict as its own PR comment starting with `QA (backend):` / `QA (frontend):` / `QA (e2e):`. For e2e, include the artifacts path from the verdict (screenshots stay on the machine that ran it).
 
-If anything is unresolved (QA still FAIL after 2 rounds, or checks red), open the PR as `--draft`, add the `needs-human` label if possible, and say why at the top of the body.
+If anything is unresolved (code QA or e2e still FAIL after 2 rounds, e2e skipped or could not run, or checks red), open the PR as `--draft`, add the `needs-human` label if possible, and say why at the top of the body.
 
 Never merge. Never approve.
 
 ## 6. Report
 
-Tell the CEO the PR URL, each side's QA verdict, and anything unresolved — in a few sentences.
+Tell the CEO the PR URL, each QA verdict (backend, frontend, e2e), and anything unresolved — in a few sentences.
