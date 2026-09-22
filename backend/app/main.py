@@ -1,9 +1,9 @@
 import asyncio
 import base64
 import json
-import re
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import TypedDict
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .config import settings
-from .llm import generate_quiz
+from .diagrams import TikzError, render_tikz, warmup
+from .llm import fix_tikz, generate_quiz
 from .obs import log, new_request_id, setup_logging, stage
-from .schemas import Diagram, GenerateResponse, Quiz, SourceKind
+from .schemas import Diagram, GenerateResponse, Question, Quiz, SourceKind
 from .text_extract import combine, extract_text
 
 
@@ -23,14 +24,32 @@ class ExtractDetail(TypedDict):
     total: int
 
 
+class DiagramsDetail(TypedDict):
+    processed: int
+    total: int
+
+
 # emit(stage, detail): при stage="extract" — только ExtractDetail; при stage="generate" —
-# только str | None. Прокидывается по цепочке вызовов вместо job-стора/polling —
-# см. docs/features/generation-progress/api-contract.md.
-ProgressEmit = Callable[[str, "ExtractDetail | str | None"], None]
+# только str | None; при stage="diagrams" — только DiagramsDetail. Прокидывается по цепочке
+# вызовов вместо job-стора/polling — см. docs/features/generation-progress/api-contract.md.
+ProgressEmit = Callable[[str, "ExtractDetail | DiagramsDetail | str | None"], None]
 
 setup_logging()
 
-app = FastAPI(title="test_generator API")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    log.info(
+        "backend started | model=%s api=%s max_context_chars=%d",
+        settings.polza_model,
+        settings.polza_base_url,
+        settings.max_context_chars,
+    )
+    await warmup()
+    yield
+
+
+app = FastAPI(title="test_generator API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,16 +60,63 @@ app.add_middleware(
 
 ALL_TYPES = ["single", "multiple", "true_false", "short"]
 DEFAULT_NUM_QUESTIONS = 10
-_PLACEHOLDER_RE = re.compile(r"\[Рисунок:\s*(.*?)\s*\|\s*diagram_id=([^\]\s]+)\s*\]", re.DOTALL)
 
-@app.on_event("startup")
-async def _startup() -> None:
-    log.info(
-        "backend started | model=%s api=%s max_context_chars=%d",
-        settings.polza_model,
-        settings.polza_base_url,
-        settings.max_context_chars,
-    )
+
+async def _draw_diagram(q: Question, sem: asyncio.Semaphore) -> bool:
+    """Скомпилировать q.tikz в SVG и положить в q.diagram. При ошибке — до
+    tikz_fix_attempts исправлений через LLM. False — рисунок построить не удалось."""
+    tikz = q.tikz or ""
+    last_err = ""
+    for attempt in range(settings.tikz_fix_attempts + 1):
+        if attempt:
+            try:
+                with stage("llm.fix_tikz", question=q.id, attempt=attempt):
+                    tikz = await fix_tikz(q.text, tikz, last_err)
+            # любая ошибка исправления (сеть, невалидный JSON) — неудачная попытка;
+            # в лог её уже записал stage()
+            except Exception:  # noqa: BLE001, S112
+                continue
+        try:
+            async with sem:
+                with stage("tikz.render", question=q.id, attempt=attempt + 1) as st:
+                    svg = await render_tikz(tikz)
+                    st["svg_bytes"] = len(svg)
+        except TikzError as e:
+            last_err = e.log
+            continue
+        b64 = base64.b64encode(svg).decode()
+        q.diagram = Diagram(image_base64=f"data:image/svg+xml;base64,{b64}", alt_text="")
+        return True
+    log.warning("вопрос %d удалён: не удалось построить рисунок: %s", q.id, last_err)
+    return False
+
+
+async def _draw_diagrams(quiz: Quiz, emit: ProgressEmit) -> None:
+    """Построить рисунки для вопросов с tikz; вопросы с непостроенными рисунками удаляются,
+    оставшиеся перенумеровываются 1..n."""
+    with_tikz = [q for q in quiz.questions if q.tikz]
+    if not with_tikz:
+        return
+    total = len(with_tikz)
+    processed = 0
+    emit("diagrams", {"processed": 0, "total": total})
+    sem = asyncio.Semaphore(settings.tikz_concurrency)
+
+    async def one(q: Question) -> tuple[Question, bool]:
+        nonlocal processed
+        ok = await _draw_diagram(q, sem)
+        processed += 1
+        emit("diagrams", {"processed": processed, "total": total})
+        return q, ok
+
+    with stage("diagrams", total=total) as st:
+        failed = {id(q) for q, ok in await asyncio.gather(*(one(q) for q in with_tikz)) if not ok}
+        quiz.questions = [q for q in quiz.questions if id(q) not in failed]
+        for i, q in enumerate(quiz.questions, start=1):
+            q.id = i
+        st["failed"] = len(failed)
+    if not quiz.questions:
+        raise HTTPException(502, "Не удалось построить рисунки ни для одного вопроса")
 
 
 @app.get("/api/health")
@@ -98,13 +164,14 @@ async def generate(
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
 
-        def emit(stage_name: str, detail: "ExtractDetail | str | None" = None) -> None:
+        def emit(
+            stage_name: str, detail: "ExtractDetail | DiagramsDetail | str | None" = None
+        ) -> None:
             queue.put_nowait({"type": "progress", "stage": stage_name, "detail": detail})
 
         async def run() -> None:
             try:
                 parts: list[tuple[str, str]] = []
-                all_diagrams: dict[str, bytes] = {}
                 with stage("extract_text", files=len(files)) as st:
                     total_bytes = 0
                     for f in files:
@@ -118,10 +185,9 @@ async def generate(
                             )
                         total_bytes += len(data)
                         with stage(f"extract:{name}", bytes=len(data)) as fst:
-                            text, diagrams = await extract_text(name, data, emit)
+                            text = await extract_text(name, data, emit)
                             fst["chars"] = len(text)
                         parts.append((name, text))
-                        all_diagrams.update(diagrams)
                     st["total_bytes"] = total_bytes
                     st["total_chars"] = sum(len(t) for _, t in parts)
 
@@ -153,18 +219,7 @@ async def generate(
                     st["questions"] = len(quiz.questions)
                     st["types"] = "/".join(sorted({q.type.value for q in quiz.questions}))
 
-                alt_texts = {did: alt for alt, did in _PLACEHOLDER_RE.findall(context)}
-                for q in quiz.questions:
-                    if q.diagram_id and q.diagram_id in all_diagrams:
-                        b64 = base64.b64encode(all_diagrams[q.diagram_id]).decode()
-                        q.diagram = Diagram(
-                            image_base64=f"data:image/png;base64,{b64}",
-                            alt_text=alt_texts.get(q.diagram_id, ""),
-                        )
-                    elif q.diagram_id:
-                        log.warning(
-                            "вопрос %d ссылается на неизвестный diagram_id=%s", q.id, q.diagram_id
-                        )
+                await _draw_diagrams(quiz, emit)
 
                 total = time.perf_counter() - req_t0
                 log.info(

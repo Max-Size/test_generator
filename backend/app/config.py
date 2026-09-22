@@ -51,10 +51,20 @@ class Settings(BaseSettings):
     vision_max_pages: int = 20
     # Сколько страниц распознаём параллельно (одновременных запросов к vision-модели)
     vision_concurrency: int = 4
-    # Максимум диаграмм, принимаемых с одной страницы
-    vision_max_diagrams_per_page: int = 5
     # Порог: страницы, где текстом извлечено меньше символов, считаем «тяжёлыми»
     vision_min_text_chars: int = 200
+
+    # --- Рисунки к вопросам: TikZ → SVG через tectonic ---
+    # путь к бинарнику tectonic
+    tikz_bin: str = "tectonic"
+    # таймаут компиляции одного рисунка, секунды
+    tikz_timeout_s: float = 20
+    # сколько рисунков компилируем параллельно
+    tikz_concurrency: int = 4
+    # сколько раз просим LLM исправить рисунок; компиляций максимум tikz_fix_attempts + 1
+    tikz_fix_attempts: int = 2
+    # максимальная длина исходника рисунка, символов
+    tikz_max_chars: int = 8000
 
     # уровень логирования бэкенда (DEBUG/INFO/WARNING/ERROR)
     log_level: str = "INFO"

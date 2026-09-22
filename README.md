@@ -33,6 +33,22 @@ uv sync                 # создаёт .venv и ставит зависимо�
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
+#### tectonic (рисунки к вопросам)
+
+Рисунки к заданиям LLM генерирует в TikZ, бэкенд компилирует их в SVG внешним бинарником
+[tectonic](https://tectonic-typesetting.github.io/). Это системная зависимость:
+
+- macOS: `brew install tectonic`
+- Linux: официальный бинарник со страницы релизов tectonic (положить в `PATH`)
+
+Путь к бинарнику можно задать в `.env` (`TIKZ_BIN`, по умолчанию `tectonic`). Без tectonic
+бэкенд не стартует («tectonic не найден: …»).
+
+**Первый старт бэкенда может занять несколько минут:** при запуске выполняется прогрев —
+tectonic компилирует эталонный рисунок и скачивает нужные LaTeX-пакеты и шрифты в свой кэш
+(`~/Library/Caches/Tectonic` на macOS, `~/.cache/Tectonic` на Linux). Дальше компиляция
+работает офлайн, ~1–1,5 с на рисунок.
+
 ### 3. Frontend
 
 ```bash

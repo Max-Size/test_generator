@@ -27,9 +27,9 @@ class Question(BaseModel):
     # эталонный текст (для short)
     correct_text: str | None = None
     explanation: str | None = None
-    # id рисунка из контекста; заполняет LLM, наружу в API не отдаётся
-    diagram_id: str | None = Field(default=None, exclude=True)
-    # заполняется бэкендом после генерации
+    # исходник рисунка (TikZ) от LLM; наружу в API не отдаётся
+    tikz: str | None = Field(default=None, exclude=True)
+    # заполняется бэкендом после компиляции tikz
     diagram: Diagram | None = None
 
     @model_validator(mode="after")
