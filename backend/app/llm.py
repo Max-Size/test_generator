@@ -3,6 +3,7 @@
 import base64
 import json
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import HTTPException
@@ -11,6 +12,9 @@ from pydantic import BaseModel, Field, ValidationError
 from .config import settings
 from .obs import log, stage
 from .schemas import Quiz, SourceKind
+
+if TYPE_CHECKING:
+    from .main import ProgressEmit
 
 SYSTEM_PROMPT = (
     "Ты — генератор экзаменационных тестов. На основе предоставленного материала "
@@ -266,6 +270,7 @@ async def generate_quiz(
     types: list[str],
     topics: str | None,
     source_kinds: list[SourceKind],
+    emit: "ProgressEmit",
 ) -> Quiz:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -278,6 +283,10 @@ async def generate_quiz(
 
     last_err = ""
     for attempt in range(1, 3):
+        emit(
+            "generate",
+            None if attempt == 1 else "ответ модели не прошёл проверку — генерируем заново",
+        )
         raw = await _call_llm(messages, attempt, quiz_format)
         with stage(f"validate attempt={attempt}", raw_chars=len(raw)) as st:
             try:

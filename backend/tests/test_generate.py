@@ -5,10 +5,12 @@ from app.llm import build_user_prompt
 from app.main import app
 from app.schemas import Question, QuestionType, Quiz, SourceKind
 
+from .conftest import parse_sse, sse_result
+
 client = TestClient(app)
 
 
-async def _fake_generate_quiz(context, num_questions, types, topics, source_kinds) -> Quiz:
+async def _fake_generate_quiz(context, num_questions, types, topics, source_kinds, emit) -> Quiz:
     return Quiz(
         title="Тест",
         questions=[
@@ -32,9 +34,12 @@ def test_file_over_size_limit_rejected(monkeypatch) -> None:
         data={"num_questions": 1, "source_kinds": "material"},
     )
 
-    assert response.status_code == 422
-    assert "big.txt" in response.json()["detail"]
-    assert "1 МБ" in response.json()["detail"]
+    assert response.status_code == 200
+    events = parse_sse(response)
+    error = next(e for e in events if e["type"] == "error")
+    assert error["status"] == 422
+    assert "big.txt" in error["detail"]
+    assert "1 МБ" in error["detail"]
 
 
 def test_generate_reports_dropped_file(monkeypatch) -> None:
@@ -55,7 +60,7 @@ def test_generate_reports_dropped_file(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    body = response.json()
+    body = sse_result(response)
     assert body["truncated"] is True
     assert body["truncated_files"] == [{"filename": "f2.txt", "reason": "dropped"}]
     assert body["source_chars"] == len(chunk1)
@@ -71,7 +76,7 @@ def test_generate_no_truncation_when_everything_fits(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    body = response.json()
+    body = sse_result(response)
     assert body["truncated"] is False
     assert body["truncated_files"] == []
 
@@ -88,9 +93,9 @@ def test_invalid_source_kinds_rejected() -> None:
 def test_source_kinds_defaults_to_material(monkeypatch) -> None:
     seen = {}
 
-    async def fake(context, num_questions, types, topics, source_kinds) -> Quiz:
+    async def fake(context, num_questions, types, topics, source_kinds, emit) -> Quiz:
         seen["kinds"] = source_kinds
-        return await _fake_generate_quiz(context, num_questions, types, topics, source_kinds)
+        return await _fake_generate_quiz(context, num_questions, types, topics, source_kinds, emit)
 
     monkeypatch.setattr("app.main.generate_quiz", fake)
     response = client.post(
@@ -99,7 +104,8 @@ def test_source_kinds_defaults_to_material(monkeypatch) -> None:
         data={"num_questions": 1},
     )
     assert response.status_code == 200
-    assert "analysis" not in response.json()
+    body = sse_result(response)
+    assert "analysis" not in body
     assert seen["kinds"] == [SourceKind.material]
 
 
@@ -121,7 +127,7 @@ def test_build_user_prompt_branches() -> None:
 
 
 def _capture(monkeypatch, seen, n_questions=1):
-    async def fake(context, num_questions, types, topics, source_kinds) -> Quiz:
+    async def fake(context, num_questions, types, topics, source_kinds, emit) -> Quiz:
         seen["n"] = num_questions
         q = Question(id=1, type=QuestionType.short, text="В?", correct_text="О")
         return Quiz(title="Тест", questions=[q.model_copy(update={"id": i}) for i in range(n_questions)])
@@ -138,21 +144,27 @@ def _post(data):
 def test_auto_count_with_sample(monkeypatch) -> None:
     seen = {}
     _capture(monkeypatch, seen)
-    assert _post({"source_kinds": "sample"}).status_code == 200
+    r = _post({"source_kinds": "sample"})
+    assert r.status_code == 200
+    sse_result(r)
     assert seen["n"] is None
 
 
 def test_default_count_without_sample(monkeypatch) -> None:
     seen = {}
     _capture(monkeypatch, seen)
-    assert _post({"source_kinds": "material"}).status_code == 200
+    r = _post({"source_kinds": "material"})
+    assert r.status_code == 200
+    sse_result(r)
     assert seen["n"] == 10
 
 
 def test_explicit_count_wins_and_validated(monkeypatch) -> None:
     seen = {}
     _capture(monkeypatch, seen)
-    assert _post({"source_kinds": "sample", "num_questions": 5}).status_code == 200
+    r = _post({"source_kinds": "sample", "num_questions": 5})
+    assert r.status_code == 200
+    sse_result(r)
     assert seen["n"] == 5
     assert _post({"num_questions": settings.max_questions + 1}).status_code == 422
 
@@ -160,7 +172,8 @@ def test_explicit_count_wins_and_validated(monkeypatch) -> None:
 def test_truncates_over_max(monkeypatch) -> None:
     _capture(monkeypatch, {}, n_questions=settings.max_questions + 5)
     r = _post({"source_kinds": "sample"})
-    assert len(r.json()["quiz"]["questions"]) == settings.max_questions
+    body = sse_result(r)
+    assert len(body["quiz"]["questions"]) == settings.max_questions
 
 
 def test_prompt_auto_count() -> None:
