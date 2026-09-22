@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Question, Quiz, TruncatedFile } from "../types";
 import RichText from "./RichText";
 import QuestionDiagram from "./QuestionDiagram";
+import { CheckIcon, InfoIcon, WarnIcon, XIcon } from "../icons";
 
 type Answers = Record<number, number[] | string>;
 
@@ -107,12 +108,15 @@ export default function QuizView({
     <div>
       {mode === "test" && (
         <div className="prog glass1">
-          <span className="prog-label">
-            Отвечено {answeredCount} из {quiz.questions.length}
-          </span>
-          <div className="prog-track">
+          <div className="prog-r">
+            <span>{quiz.title}</span>
+            <span>
+              Отвечено {answeredCount} из {quiz.questions.length}
+            </span>
+          </div>
+          <div className="bar">
             <div
-              className="prog-fill"
+              className="bar-f"
               style={{ width: `${quiz.questions.length ? (answeredCount / quiz.questions.length) * 100 : 0}%` }}
             />
           </div>
@@ -121,12 +125,16 @@ export default function QuizView({
 
       {mode === "test" && showWarning && truncatedFiles && truncatedFiles.length > 0 && (
         <div className="msg msg-warn section" role="status">
-          <div>
-            <strong>Часть файлов не поместилась полностью:</strong>
-            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          <span className="msg-ic">
+            <WarnIcon />
+          </span>
+          <div className="msg-b">
+            <p className="msg-t">Часть файлов не поместилась полностью</p>
+            <ul className="wlist">
               {truncatedFiles.map((f) => (
-                <li key={f.filename}>
-                  {f.filename} — {truncatedReasonText(f)}
+                <li className="wrow" key={f.filename}>
+                  <span className="wname">{f.filename}</span>
+                  <span className="wtag">{truncatedReasonText(f)}</span>
                 </li>
               ))}
             </ul>
@@ -137,127 +145,137 @@ export default function QuizView({
             aria-label="Закрыть предупреждение"
             onClick={() => setShowWarning(false)}
           >
-            ✕
+            <XIcon className="ic sm" />
           </button>
         </div>
       )}
 
-      <h2 className="app-title" style={{ fontSize: 20, marginBottom: 16 }}>
-        {quiz.title}
-      </h2>
+      <div className="qlist">
+        {quiz.questions.map((q, n) => {
+          const ans = answers[q.id];
+          const picked = q.type === "short" ? [] : ((ans as number[]) ?? []);
+          const correct = isCorrect(q, ans);
+          const isTf = q.type === "true_false";
+          const role = q.type === "multiple" ? "group" : "radiogroup";
 
-      {quiz.questions.map((q, n) => {
-        const ans = answers[q.id];
-        const picked = q.type === "short" ? [] : ((ans as number[]) ?? []);
-        const correct = isCorrect(q, ans);
-        const isTf = q.type === "true_false";
-        const role = q.type === "multiple" ? "group" : "radiogroup";
-
-        return (
-          <article
-            key={q.id}
-            ref={(el) => {
-              if (el) cardRefs.current.set(q.id, el);
-              else cardRefs.current.delete(q.id);
-            }}
-            tabIndex={-1}
-            className={`card glass2${lazy ? " card-lazy" : ""}`}
-          >
-            <div className="card-head">
-              <span>
-                <span className="qnum">{n + 1}.</span>{" "}
+          return (
+            <article
+              key={q.id}
+              ref={(el) => {
+                if (el) cardRefs.current.set(q.id, el);
+                else cardRefs.current.delete(q.id);
+              }}
+              tabIndex={-1}
+              className={`card glass2${lazy ? " card-lazy" : ""}`}
+            >
+              <div className="q-h">
+                <span className="qn">{n + 1}</span>
                 <span className="qtype">{QTYPE_LABELS[q.type]}</span>
-              </span>
-              {mode === "review" && (
-                <span className={`verdict ${correct ? "ok" : "no"}`}>
-                  {correct ? "Верно" : "Неверно"}
-                </span>
-              )}
-            </div>
-
-            <p className="qtext">
-              <RichText>{q.text}</RichText>
-            </p>
-
-            <QuestionDiagram diagram={q.diagram} />
-
-            {q.type === "short" ? (
-              <div className="field-wrap">
-                <input
-                  type="text"
-                  disabled={mode === "review"}
-                  value={(ans as string) ?? ""}
-                  onChange={(e) => setAnswers((p) => ({ ...p, [q.id]: e.target.value }))}
-                  className={
-                    "field" + (mode === "review" ? (correct ? " ok" : " no") : "")
-                  }
-                  placeholder="Ваш ответ"
-                  aria-label={`Ответ на вопрос ${n + 1}`}
-                />
                 {mode === "review" && (
-                  <span className={`fstat ${correct ? "ok" : "no"}`} aria-hidden="true">
-                    {correct ? "✓" : "✕"}
+                  <span className={`verdict ${correct ? "ok" : "no"}`}>
+                    {correct ? <CheckIcon /> : <XIcon />}
+                    {correct ? "Верно" : "Неверно"}
                   </span>
                 )}
               </div>
-            ) : (
-              <div role={role} className={isTf ? "opts tf" : "opts"} aria-label={`Варианты ответа на вопрос ${n + 1}`}>
-                {q.options.map((opt, i) => {
-                  const isPicked = picked.includes(i);
-                  const isRight = q.correct_indexes.includes(i);
-                  let statusClass = "";
-                  let tag: string | null = null;
-                  if (mode === "review") {
-                    if (isPicked && isRight) {
-                      statusClass = " ok";
-                      tag = "Верно";
-                    } else if (isPicked && !isRight) {
-                      statusClass = " no";
-                      tag = "Неверно";
-                    } else if (!isPicked && isRight) {
-                      statusClass = " miss";
-                      tag = "Пропущено";
-                    }
-                  }
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      role={q.type === "multiple" ? "checkbox" : "radio"}
-                      aria-checked={isPicked}
-                      disabled={mode === "review"}
-                      className={`opt${statusClass}${mode === "review" ? " locked" : ""}`}
-                      onClick={() => setChoice(q, i)}
-                    >
-                      <span className="opt-mark" aria-hidden="true" />
-                      <RichText>{opt}</RichText>
-                      {tag && <span className="o-tag">{tag}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
 
-            {mode === "review" && (
-              <>
-                {q.type === "short" && !correct && (
-                  <p className="correct-answer">
-                    Верный ответ: <strong><RichText>{q.correct_text ?? ""}</RichText></strong>
-                  </p>
-                )}
-                {q.explanation && (
-                  <div className="expl inset">
-                    <RichText>{q.explanation}</RichText>
-                  </div>
-                )}
-              </>
-            )}
-          </article>
-        );
-      })}
+              <p className="q-t">
+                <RichText>{q.text}</RichText>
+              </p>
+
+              <QuestionDiagram diagram={q.diagram} />
+
+              {q.type === "short" ? (
+                <div className="field-wrap">
+                  <input
+                    type="text"
+                    disabled={mode === "review"}
+                    value={(ans as string) ?? ""}
+                    onChange={(e) => setAnswers((p) => ({ ...p, [q.id]: e.target.value }))}
+                    className={
+                      "field" + (mode === "review" ? (correct ? " ok" : " no") : "")
+                    }
+                    placeholder="Ваш ответ"
+                    aria-label={`Ответ на вопрос ${n + 1}`}
+                  />
+                  {mode === "review" && (
+                    <span className={`fstat ${correct ? "ok" : "no"}`} aria-hidden="true">
+                      {correct ? <CheckIcon className="ic sm" /> : <XIcon className="ic sm" />}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div role={role} className={isTf ? "opts tf" : "opts"} aria-label={`Варианты ответа на вопрос ${n + 1}`}>
+                  {q.options.map((opt, i) => {
+                    const isPicked = picked.includes(i);
+                    const isRight = q.correct_indexes.includes(i);
+                    let statusClass = "";
+                    let tag: string | null = null;
+                    if (mode === "review") {
+                      if (isPicked && isRight) {
+                        statusClass = " ok";
+                        tag = "Верно";
+                      } else if (isPicked && !isRight) {
+                        statusClass = " no";
+                        tag = "Неверно";
+                      } else if (!isPicked && isRight) {
+                        statusClass = " miss";
+                        tag = "Пропущено";
+                      }
+                    }
+                    const showCheck = isPicked;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        role={q.type === "multiple" ? "checkbox" : "radio"}
+                        aria-checked={isPicked}
+                        disabled={mode === "review"}
+                        className={`opt${statusClass}${mode === "review" ? " locked" : ""}`}
+                        onClick={() => setChoice(q, i)}
+                      >
+                        <span className={`mk ${q.type === "multiple" ? "c" : "r"}`} aria-hidden="true">
+                          {showCheck && <CheckIcon className="ic sm" />}
+                        </span>
+                        <span className="o-b">
+                          <span className="o-t">
+                            <RichText>{opt}</RichText>
+                          </span>
+                          {tag && <span className={`o-tag ${statusClass.trim() === "no" ? "no" : "ok"}`}>{tag}</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {mode === "review" && (
+                <>
+                  {q.type === "short" && !correct && (
+                    <p className="corr">
+                      <CheckIcon className="ic sm" />
+                      Верный ответ: <RichText>{q.correct_text ?? ""}</RichText>
+                    </p>
+                  )}
+                  {q.explanation && (
+                    <div className="expl">
+                      <span className="expl-ic">
+                        <InfoIcon />
+                      </span>
+                      <p className="expl-p">
+                        <RichText>{q.explanation}</RichText>
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </article>
+          );
+        })}
+      </div>
 
       {mode === "test" && (
-        <>
+        <div className="check-row">
           <button type="button" className="btn btn-primary lg" onClick={handleCheckClick}>
             Проверить
           </button>
@@ -266,20 +284,30 @@ export default function QuizView({
               ? `Не отвечено вопросов: ${unansweredQuestions.length}. Нажмите «Проверить» ещё раз, чтобы завершить — они будут засчитаны как неверные.`
               : "Неотвеченные вопросы будут засчитаны как неверные."}
           </p>
-        </>
+        </div>
       )}
 
       {mode === "review" && (
         <div className="result glass1" ref={resultRef} tabIndex={-1}>
-          <p className="result-score">
-            {score} из {quiz.questions.length}
-          </p>
-          <div className="dots" aria-hidden="true">
-            {quiz.questions.map((q) => (
-              <span key={q.id} className={`dot ${isCorrect(q, answers[q.id]) ? "ok" : "no"}`} />
-            ))}
+          <div>
+            <span className="over">Результат</span>
+            <div className="score">
+              <span className="sc-n">{score}</span>
+              <span className="sc-of">из {quiz.questions.length}</span>
+            </div>
+            <p className="res-t">{quiz.title}</p>
           </div>
-          <div className="result-actions">
+          <div className="dots" aria-hidden="true">
+            {quiz.questions.map((q) => {
+              const ok = isCorrect(q, answers[q.id]);
+              return (
+                <span key={q.id} className={`dot ${ok ? "ok" : "no"}`}>
+                  {ok ? <CheckIcon className="ic sm" /> : <XIcon className="ic sm" />}
+                </span>
+              );
+            })}
+          </div>
+          <div className="res-a">
             <button type="button" className="btn btn-secondary" onClick={onRetake}>
               Пройти заново
             </button>

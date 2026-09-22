@@ -4,6 +4,7 @@ import UploadForm, { type FormValues } from "./components/UploadForm";
 import QuizView from "./components/QuizView";
 import GenerationProgress from "./components/GenerationProgress";
 import type { GenerateResponse, ProgressState } from "./types";
+import { WarnIcon, XIcon } from "./icons";
 
 type View = "form" | "loading" | "test" | "review";
 
@@ -44,21 +45,32 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="bg-spots" aria-hidden="true" />
+      <div className="bg-spots" aria-hidden="true">
+        <div className="blob b1" />
+        <div className="blob b2" />
+        <div className="blob b3" />
+        <div className="blob b4" />
+      </div>
       <h1 className="app-title">Генератор тестов</h1>
 
       {view === "form" && (
         <>
           {error && (
             <div className="msg msg-err section" role="alert">
-              <span>{error}</span>
+              <span className="msg-ic">
+                <WarnIcon />
+              </span>
+              <div className="msg-b">
+                <p className="msg-t">Не удалось создать тест</p>
+                <p className="msg-p">{error}</p>
+              </div>
               <button
                 type="button"
                 className="msg-close"
                 aria-label="Закрыть сообщение об ошибке"
                 onClick={() => setError(null)}
               >
-                ✕
+                <XIcon className="ic sm" />
               </button>
             </div>
           )}

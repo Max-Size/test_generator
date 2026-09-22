@@ -1,4 +1,5 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useRef, useState } from "react";
+import { CheckIcon, FolderIcon, TrashIcon } from "../icons";
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "single", label: "Один ответ" },
@@ -120,11 +121,11 @@ export default function UploadForm({
     >
       {/* 1. Files */}
       <div className="section">
-        <label className="label" id="files-label">
+        <span className="label" id="files-label">
           1. Документы (pdf, docx, txt, md)
-        </label>
+        </span>
         <div
-          className={`drop${files.length > 0 ? " compact" : ""}${dragOver ? " dragover" : ""}`}
+          className={`drop${files.length > 0 ? " compact" : ""}${dragOver ? " over" : ""}`}
           role="button"
           tabIndex={0}
           aria-labelledby="files-label"
@@ -146,10 +147,15 @@ export default function UploadForm({
             addFiles(e.dataTransfer.files);
           }}
         >
-          <span className="drop-title">
-            {files.length > 0 ? "Добавить ещё файлы" : "Перетащите файлы сюда или нажмите, чтобы выбрать"}
+          <span className="drop-ic" aria-hidden="true">
+            <FolderIcon />
           </span>
-          {files.length === 0 && <span className="drop-hint">pdf, docx, txt, md</span>}
+          <span className="drop-b">
+            <span className="drop-t">
+              {files.length > 0 ? "Добавить ещё файлы" : "Перетащите файлы сюда или нажмите, чтобы выбрать"}
+            </span>
+            {files.length === 0 && <span className="drop-s">PDF, DOCX, TXT или MD. Можно загрузить несколько.</span>}
+          </span>
         </div>
         <input
           ref={fileInputRef}
@@ -166,16 +172,18 @@ export default function UploadForm({
           <ul className="files">
             {files.map((f, i) => (
               <li className="file" key={`${f.name}-${f.size}-${i}`}>
-                <span className="file-badge">{extBadge(f.name)}</span>
-                <span className="file-name">{f.name}</span>
-                <span className="file-size">{formatSize(f.size)}</span>
+                <span className="ext">{extBadge(f.name)}</span>
+                <span className="fname">
+                  <span className="fn">{f.name}</span>
+                  <span className="fs">{formatSize(f.size)}</span>
+                </span>
                 <button
                   type="button"
                   className="iconbtn"
                   aria-label={`Удалить файл ${f.name}`}
                   onClick={() => removeFile(i)}
                 >
-                  ✕
+                  <TrashIcon className="ic sm" />
                 </button>
               </li>
             ))}
@@ -187,18 +195,24 @@ export default function UploadForm({
       <div className="section">
         <span className="label">2. Что содержит документ</span>
         <div className="tiles">
-          {SOURCE_KIND_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className="tile"
-              aria-pressed={sourceKinds.includes(opt.value)}
-              onClick={() => toggleKind(opt.value)}
-            >
-              <span className="tile-title">{opt.label}</span>
-              <span className="tile-desc">{opt.desc}</span>
-            </button>
-          ))}
+          {SOURCE_KIND_OPTIONS.map((opt) => {
+            const on = sourceKinds.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`tile${on ? " on" : ""}`}
+                aria-pressed={on}
+                onClick={() => toggleKind(opt.value)}
+              >
+                <span className="tile-t">{opt.label}</span>
+                <span className="tile-s">{opt.desc}</span>
+                <span className="cb" aria-hidden="true">
+                  {on && <CheckIcon className="ic sm" />}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -206,7 +220,7 @@ export default function UploadForm({
       <div className="section">
         <span className="label">3. Количество вопросов</span>
         {hasSample && (
-          <div className="switch-row" style={{ marginBottom: useAuto ? 0 : 12 }}>
+          <div className="switch-row" style={{ marginBottom: useAuto ? 0 : 16 }}>
             <button
               type="button"
               role="switch"
@@ -221,18 +235,32 @@ export default function UploadForm({
           </div>
         )}
         {!useAuto && (
-          <div className="slider-row" style={{ marginTop: hasSample ? 12 : 0 }}>
-            <input
-              type="range"
-              min={1}
-              max={30}
-              value={numQuestions}
-              className="slider"
-              style={{ "--fill": `${((numQuestions - 1) / 29) * 100}%` } as CSSProperties}
-              aria-label="Количество вопросов"
-              onChange={(e) => setNumQuestions(Number(e.target.value))}
-            />
-            <span className="slider-value">{numQuestions}</span>
+          <div className="slider-block">
+            <div className="sl-head">
+              <span className="hint" style={{ margin: 0 }}>
+                Сколько вопросов включить в тест
+              </span>
+              <span className="count">{numQuestions}</span>
+            </div>
+            <div className="slider">
+              <div className="track">
+                <div className="fill" style={{ width: `${((numQuestions - 1) / 29) * 100}%` }} />
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                value={numQuestions}
+                className="range"
+                aria-label="Количество вопросов"
+                onChange={(e) => setNumQuestions(Number(e.target.value))}
+              />
+              <div className="thumb" style={{ left: `calc((100% - 28px) * ${(numQuestions - 1) / 29})` }} />
+            </div>
+            <div className="sl-scale">
+              <span>1</span>
+              <span>30</span>
+            </div>
           </div>
         )}
       </div>
@@ -240,18 +268,22 @@ export default function UploadForm({
       {/* 4. Question types */}
       <div className="section">
         <span className="label">4. Типы вопросов</span>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {TYPE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className="chip"
-              aria-pressed={questionTypes.includes(opt.value)}
-              onClick={() => toggleType(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="chips">
+          {TYPE_OPTIONS.map((opt) => {
+            const on = questionTypes.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`chip${on ? " on" : ""}`}
+                aria-pressed={on}
+                onClick={() => toggleType(opt.value)}
+              >
+                {on && <CheckIcon className="ic sm" />}
+                <span>{opt.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -270,22 +302,27 @@ export default function UploadForm({
         />
       </div>
 
-      <button type="submit" disabled={!canSubmit} className="btn btn-primary lg">
-        {loading ? "Генерируем…" : "Создать тест"}
-      </button>
-
-      {missing.length > 0 ? (
-        <ul className="miss-list">
-          {missing.map((m) => (
-            <li key={m}>Не хватает: {m}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="ready-summary">
-          Всё готово: {files.length} {pluralFiles(files.length)},{" "}
-          {useAuto ? "количество вопросов по образцу" : `${numQuestions} ${pluralQuestions(numQuestions)}`}
-        </p>
-      )}
+      <div className="action">
+        <div className="action-l">
+          {missing.length > 0 ? (
+            <ul className="miss-list">
+              {missing.map((m) => (
+                <li key={m} className="miss">
+                  Не хватает: {m}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="ready-summary">
+              Всё готово: {files.length} {pluralFiles(files.length)},{" "}
+              {useAuto ? "количество вопросов по образцу" : `${numQuestions} ${pluralQuestions(numQuestions)}`}
+            </p>
+          )}
+        </div>
+        <button type="submit" disabled={!canSubmit} className="btn btn-primary lg">
+          {loading ? "Генерируем…" : "Создать тест"}
+        </button>
+      </div>
     </form>
   );
 }

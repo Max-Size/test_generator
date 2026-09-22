@@ -1,4 +1,5 @@
 import type { ExtractDetail, ProgressStage, ProgressState } from "../types";
+import { CheckIcon } from "../icons";
 
 const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "extract", label: "Извлекаем текст из документов" },
@@ -22,16 +23,20 @@ export default function GenerationProgress({ progress }: { progress: ProgressSta
 
   return (
     <div className="loading glass1" role="status" aria-live="polite">
-      <div className="skel" aria-hidden="true" />
-      <div className="ring" aria-hidden="true" />
-      <p className="drop-title">Генерируем тест…</p>
+      <div className="ring" aria-hidden="true">
+        <svg viewBox="0 0 60 60">
+          <circle className="ring-bg" cx="30" cy="30" r="26" />
+          <circle className="ring-arc" cx="30" cy="30" r="26" />
+        </svg>
+      </div>
+      <p className="loading-t">Генерируем тест…</p>
       <ul className="stages">
         {STEPS.map((s, i) => {
-          const state = i < currentIdx ? "done" : i === currentIdx ? "active" : "pending";
+          const state = i < currentIdx ? "done" : i === currentIdx ? "active" : "";
           return (
             <li key={s.stage} className={`stage ${state}`}>
               <span className="st-ic" aria-hidden="true">
-                {state === "done" ? "✓" : ""}
+                {state === "done" && <CheckIcon className="ic sm" />}
               </span>
               <span>
                 <div>{s.label}</div>
@@ -41,6 +46,10 @@ export default function GenerationProgress({ progress }: { progress: ProgressSta
           );
         })}
       </ul>
+      <div className="skel" aria-hidden="true">
+        <div className="sk o" />
+        <div className="sk o" />
+      </div>
     </div>
   );
 }
