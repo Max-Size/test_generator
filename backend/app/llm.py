@@ -2,6 +2,7 @@
 страниц PDF."""
 import base64
 import json
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ SYSTEM_PROMPT = (
     "Формулировки вопросов и вариантов — на языке исходного материала. "
     "Всю математику (дроби, степени, корни, формулы) записывай в LaTeX: $...$ для строчных, "
     "$$...$$ для выключных; дроби только через \\frac{числитель}{знаменатель}, а не a/b. "
+    "В JSON-строках каждый обратный слэш удваивай: пиши \"$\\\\frac{1}{2}$\", "
+    "а не \"$\\frac{1}{2}$\". "
     "Если для ответа на вопрос необходим рисунок, упомянутый в материале как "
     "[Рисунок: ... | diagram_id=...], укажи этот diagram_id в поле diagram_id вопроса; "
     "если рисунок не нужен — diagram_id = null. "
@@ -32,6 +35,8 @@ VISION_SYSTEM_PROMPT = (
     "Ты аккуратно переносишь содержимое страницы документа в Markdown. "
     "Сохраняй заголовки, списки, порядок абзацев и таблицы (Markdown-таблицами). "
     "Математические формулы записывай в LaTeX: $...$ для строчных, $$...$$ для выключных. "
+    "В JSON-строках каждый обратный слэш удваивай: пиши \"$\\\\frac{1}{2}$\", "
+    "а не \"$\\frac{1}{2}$\". "
     "Каждый график, диаграмму, чертёж или иллюстрацию (включая числовую прямую) описывай "
     "словами в квадратных скобках — с подписями, обозначениями осей и числовыми значениями — "
     "и добавь объект в diagrams: id (например d1, уникален на странице), краткий alt_text и "
@@ -52,6 +57,24 @@ class PageDiagram(BaseModel):
 class PageTranscription(BaseModel):
     markdown: str
     diagrams: list[PageDiagram] = Field(default_factory=list)
+
+
+# Модель иногда пишет LaTeX в JSON-строке с одним слэшем ("\frac" вместо "\\frac"):
+# \f, \b, \t, \r, \n — валидные JSON-escape и молча становятся управляющими символами,
+# а \s, \c, \p… ломают парсинг. Удваиваем такие одиночные слэши до json.loads.
+_LONE_BACKSLASH = re.compile(
+    r"\\\\"  # уже экранированный слэш — оставляем
+    r"|\\u[0-9a-fA-F]{4}"  # \uXXXX — оставляем
+    r"|\\(?=[^\"\\/bfnrtu]|u|[bfrt][a-zA-Z]"
+    r"|n(?:eq|e|u|ot|abla|eg|i|otin|ode|ewline)(?![a-zA-Z]))"
+)
+
+
+def _fix_latex_escapes(raw: str) -> str:
+    fixed = _LONE_BACKSLASH.sub(lambda m: m.group(0) if len(m.group(0)) > 1 else r"\\", raw)
+    if len(fixed) != len(raw):
+        log.info("LLM-ответ: удвоено %d одиночных обратных слэшей LaTeX", len(fixed) - len(raw))
+    return fixed
 
 
 def _strictify(node):
@@ -256,7 +279,7 @@ async def transcribe_page(png_bytes: bytes, page_no: int) -> PageTranscription:
             messages, attempt=1, response_format=_response_format("page", PAGE_JSON_SCHEMA),
             model=settings.vision_model,
         )
-        return PageTranscription.model_validate_json(raw)
+        return PageTranscription.model_validate_json(_fix_latex_escapes(raw))
     except HTTPException as e:
         log.warning("vision-распознавание страницы %d не удалось: %s", page_no, e.detail)
     except (ValidationError, json.JSONDecodeError) as e:
@@ -290,7 +313,7 @@ async def generate_quiz(
         raw = await _call_llm(messages, attempt, quiz_format)
         with stage(f"validate attempt={attempt}", raw_chars=len(raw)) as st:
             try:
-                quiz = Quiz.model_validate_json(raw)
+                quiz = Quiz.model_validate_json(_fix_latex_escapes(raw))
                 st["questions"] = len(quiz.questions)
                 st["ok"] = True
                 return quiz
