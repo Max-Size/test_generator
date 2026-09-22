@@ -9,6 +9,8 @@ from app.llm import QUIZ_JSON_SCHEMA, PageDiagram, PageTranscription
 from app.main import app
 from app.schemas import Question, QuestionType, Quiz
 
+from .conftest import sse_result
+
 client = TestClient(app)
 
 
@@ -36,25 +38,26 @@ def test_crop_and_cache(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(text_extract, "transcribe_page", fake)
     data = _pdf()
-    text, diagrams = asyncio.run(text_extract.extract_text("a.pdf", data))
+    noop_emit = lambda *a: None
+    text, diagrams = asyncio.run(text_extract.extract_text("a.pdf", data, noop_emit))
     assert len(diagrams) == 1
     did, png = next(iter(diagrams.items()))
     assert did.endswith("_p1_d1") and f"diagram_id={did}]" in text
     assert png.startswith(b"\x89PNG")
 
-    text2, diagrams2 = asyncio.run(text_extract.extract_text("a.pdf", data))
+    text2, diagrams2 = asyncio.run(text_extract.extract_text("a.pdf", data, noop_emit))
     assert calls == [1] and text2 == text and diagrams2 == diagrams
 
 
 def _quiz_with(diagram_id):
-    async def gen(context, n, types, topics, kinds):
+    async def gen(context, n, types, topics, kinds, emit):
         return Quiz(title="t", questions=[Question(
             id=1, type=QuestionType.short, text="q", correct_text="a", diagram_id=diagram_id)])
     return gen
 
 
 def _post(monkeypatch, diagram_id):
-    async def fake_extract(name, data):
+    async def fake_extract(name, data, emit):
         return "[Рисунок: числовая прямая | diagram_id=x1]", {"x1": b"\x89PNGdata"}
 
     monkeypatch.setattr("app.main.extract_text", fake_extract)
@@ -62,7 +65,7 @@ def _post(monkeypatch, diagram_id):
     r = client.post("/api/generate", files={"files": ("a.pdf", b"x")},
                     data={"num_questions": 1})
     assert r.status_code == 200
-    return r.json()["quiz"]["questions"][0]
+    return sse_result(r)["quiz"]["questions"][0]
 
 
 def test_diagram_resolved_and_id_hidden(monkeypatch) -> None:

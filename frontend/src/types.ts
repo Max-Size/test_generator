@@ -36,3 +36,15 @@ export interface GenerateResponse {
   truncated: boolean;
   truncated_files?: TruncatedFile[];
 }
+
+export type ProgressStage = "extract" | "generate";
+
+export interface ExtractDetail {
+  filename: string;
+  processed: number;
+  total: number;
+}
+
+export type ProgressState =
+  | { stage: "extract"; detail: ExtractDetail }
+  | { stage: "generate"; detail: string | null };

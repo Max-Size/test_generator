@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import io
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pymupdf
 import pymupdf4llm
@@ -25,6 +26,9 @@ from .llm import PageTranscription, transcribe_page
 from .obs import log
 from .schemas import TruncatedFile
 from .text_clean import clean_markdown, page_has_symbol_font, page_text_from_dict
+
+if TYPE_CHECKING:
+    from .main import ProgressEmit
 
 
 def _digest(data: bytes) -> str:
@@ -64,7 +68,9 @@ def _page_needs_vision(page: "pymupdf.Page", text: str) -> bool:
     )
 
 
-async def _from_pdf(data: bytes) -> tuple[str, dict[str, bytes]]:
+async def _from_pdf(
+    data: bytes, filename: str, emit: "ProgressEmit"
+) -> tuple[str, dict[str, bytes]]:
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
         chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, show_progress=False)
@@ -92,15 +98,23 @@ async def _from_pdf(data: bytes) -> tuple[str, dict[str, bytes]]:
             if _page_needs_vision(doc[i], md_text):
                 heavy.append(i)
 
+        # локальный проход завершён без LLM — эти страницы уже готовы
+        done = len(pages_md) - len(heavy)
+        emit("extract", {"filename": filename, "processed": done, "total": len(pages_md)})
+
         diagrams: dict[str, bytes] = {}
         prefix = _digest(data)[:8]
         if heavy:
             sem = asyncio.Semaphore(settings.vision_concurrency)
 
             async def _recognize(idx: int) -> tuple[int, PageTranscription, "pymupdf.Pixmap"]:
+                nonlocal done
                 pix = doc[idx].get_pixmap(dpi=settings.vision_dpi)
                 async with sem:
-                    return idx, await transcribe_page(pix.tobytes("png"), idx + 1), pix
+                    tr = await transcribe_page(pix.tobytes("png"), idx + 1)
+                done += 1
+                emit("extract", {"filename": filename, "processed": done, "total": len(pages_md)})
+                return idx, tr, pix
 
             log.info("pdf: %d страниц в vision (параллельно по %d)",
                      len(heavy), settings.vision_concurrency)
@@ -136,8 +150,11 @@ def _from_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def extract_text(filename: str, data: bytes) -> tuple[str, dict[str, bytes]]:
+async def extract_text(
+    filename: str, data: bytes, emit: "ProgressEmit"
+) -> tuple[str, dict[str, bytes]]:
     name = filename.lower()
+    emit("extract", {"filename": filename, "processed": 0, "total": 0})
 
     cache = _cache_file(data)
     if cache.exists():
@@ -149,7 +166,7 @@ async def extract_text(filename: str, data: bytes) -> tuple[str, dict[str, bytes
     diagrams: dict[str, bytes] = {}
     try:
         if name.endswith(".pdf"):
-            text, diagrams = await _from_pdf(data)
+            text, diagrams = await _from_pdf(data, filename, emit)
         elif name.endswith(".docx"):
             text = _from_docx(data)
         elif name.endswith((".txt", ".md")):
