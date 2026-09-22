@@ -4,6 +4,7 @@ import { CheckIcon } from "../icons";
 const STEPS: { stage: ProgressStage; label: string }[] = [
   { stage: "extract", label: "Извлекаем текст из документов" },
   { stage: "generate", label: "Составляем тест" },
+  { stage: "diagrams", label: "Рисуем схемы" },
 ];
 
 function extractDetailText(d: ExtractDetail): string | null {
@@ -12,14 +13,24 @@ function extractDetailText(d: ExtractDetail): string | null {
   return `${d.filename}: страница ${d.processed} из ${d.total}`;
 }
 
+function detailTextOf(progress: ProgressState | null): string | null {
+  if (!progress) return null;
+  switch (progress.stage) {
+    case "extract":
+      return extractDetailText(progress.detail);
+    case "generate":
+      return progress.detail;
+    case "diagrams":
+      return `${progress.detail.processed} из ${progress.detail.total}`;
+  }
+}
+
 export default function GenerationProgress({ progress }: { progress: ProgressState | null }) {
-  const currentIdx = progress ? STEPS.findIndex((s) => s.stage === progress.stage) : -1;
-  const detailText =
-    progress?.stage === "extract"
-      ? extractDetailText(progress.detail)
-      : progress?.stage === "generate"
-        ? progress.detail
-        : null;
+  // «Рисуем схемы» — последний этап и приходит только если у теста есть рисунки,
+  // поэтому показываем шаг, лишь когда текущий этап — "diagrams".
+  const steps = progress?.stage === "diagrams" ? STEPS : STEPS.filter((s) => s.stage !== "diagrams");
+  const currentIdx = progress ? steps.findIndex((s) => s.stage === progress.stage) : -1;
+  const detailText = detailTextOf(progress);
 
   return (
     <div className="loading glass1" role="status" aria-live="polite">
@@ -31,7 +42,7 @@ export default function GenerationProgress({ progress }: { progress: ProgressSta
       </div>
       <p className="loading-t">Генерируем тест…</p>
       <ul className="stages">
-        {STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const state = i < currentIdx ? "done" : i === currentIdx ? "active" : "";
           return (
             <li key={s.stage} className={`stage ${state}`}>

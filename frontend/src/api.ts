@@ -1,4 +1,4 @@
-import type { GenerateResponse } from "./types";
+import type { GenerateResponse, ProgressStage, ProgressState } from "./types";
 
 export async function generateQuiz(
   params: {
@@ -8,7 +8,7 @@ export async function generateQuiz(
     topics: string;
     sourceKinds: string[];
   },
-  onProgress: (stage: "extract" | "generate", detail: string | null) => void,
+  onProgress: (stage: ProgressStage, detail: ProgressState["detail"]) => void,
 ): Promise<GenerateResponse> {
   const fd = new FormData();
   params.files.forEach((f) => fd.append("files", f));
