@@ -19,7 +19,7 @@ export default function RichText({ children }: { children: string }) {
         ((chunk.startsWith("$") && chunk.endsWith("$") && chunk.length > 2) ||
           (chunk.startsWith("\\(") && chunk.endsWith("\\)")));
       if (!block && !inline) return { key: i, kind: "text" as const, value: chunk };
-      const delimLen = chunk.startsWith("$") ? 1 : 2;
+      const delimLen = chunk.startsWith("$$") || chunk.startsWith("\\[") ? 2 : 1;
       const tex = chunk.slice(delimLen, chunk.length - delimLen);
       try {
         const html = katex.renderToString(tex, {
@@ -39,7 +39,7 @@ export default function RichText({ children }: { children: string }) {
         p.kind === "text" ? (
           <span key={p.key}>{p.value}</span>
         ) : p.block ? (
-          <span key={p.key} className="paper fx" dangerouslySetInnerHTML={{ __html: p.html }} />
+          <span key={p.key} className="fx" dangerouslySetInnerHTML={{ __html: p.html }} />
         ) : (
           <span key={p.key} dangerouslySetInnerHTML={{ __html: p.html }} />
         ),
