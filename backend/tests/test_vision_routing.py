@@ -64,7 +64,7 @@ def test_vision_failure_falls_back_to_local_text(monkeypatch) -> None:
         return PageTranscription(markdown="")
 
     monkeypatch.setattr(text_extract, "transcribe_page", fake_transcribe)
-    out, _ = asyncio.run(text_extract._from_pdf(data, "f.pdf", lambda *a: None))
+    out = asyncio.run(text_extract._from_pdf(data, "f.pdf", lambda *a: None))
     assert "Local fallback text" in out
 
 

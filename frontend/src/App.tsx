@@ -21,7 +21,7 @@ export default function App() {
     setProgress(null);
     try {
       const res = await generateQuiz(v, (stage, detail) =>
-        setProgress({ stage, detail } as unknown as ProgressState),
+        setProgress({ stage, detail } as ProgressState),
       );
       setResult(res);
       setView("test");

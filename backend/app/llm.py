@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .config import settings
 from .obs import log, stage
@@ -25,9 +25,19 @@ SYSTEM_PROMPT = (
     "$$...$$ для выключных; дроби только через \\frac{числитель}{знаменатель}, а не a/b. "
     "В JSON-строках каждый обратный слэш удваивай: пиши \"$\\\\frac{1}{2}$\", "
     "а не \"$\\frac{1}{2}$\". "
-    "Если для ответа на вопрос необходим рисунок, упомянутый в материале как "
-    "[Рисунок: ... | diagram_id=...], укажи этот diagram_id в поле diagram_id вопроса; "
-    "если рисунок не нужен — diagram_id = null. "
+    "Рисунки. Если исходное задание в материале содержит [Рисунок: ...] и для ответа "
+    "рисунок нужен, аналогичный вопрос ОБЯЗАН иметь поле tikz — новый рисунок под НОВЫЕ "
+    "числа и условия вопроса; иначе tikz = null. Правила для tikz: "
+    "ровно одно окружение \\begin{tikzpicture}...\\end{tikzpicture} или "
+    "\\begin{circuitikz}...\\end{circuitikz}, без преамбулы, \\documentclass и "
+    "\\usepackage; доступны только пакеты tikz, pgfplots (compat=1.18), circuitikz "
+    "(опция european) и библиотеки TikZ calc, angles, quotes, intersections, arrows.meta, "
+    "patterns, decorations.markings; координаты и положения вычисляй из чисел условия "
+    "(точка A = 6/11 ставится ровно в 6/11, а не примерно); рисунок не должен подсказывать "
+    "ответ (не подписывай искомую величину); подписи — в $...$, русский текст допустим; "
+    "ширина рисунка — не больше ~10 см; графики функций — через pgfplots (окружение axis), "
+    "подписи внутри осей — в пределах xmin..xmax и ymin..ymax; электрические схемы — "
+    "через circuitikz. Обратные слэши в tikz тоже удваивай. "
     "Верни ТОЛЬКО JSON по заданной схеме, без markdown и комментариев."
 )
 
@@ -37,26 +47,23 @@ VISION_SYSTEM_PROMPT = (
     "Математические формулы записывай в LaTeX: $...$ для строчных, $$...$$ для выключных. "
     "В JSON-строках каждый обратный слэш удваивай: пиши \"$\\\\frac{1}{2}$\", "
     "а не \"$\\frac{1}{2}$\". "
-    "Каждый график, диаграмму, чертёж или иллюстрацию (включая числовую прямую) описывай "
-    "словами в квадратных скобках — с подписями, обозначениями осей и числовыми значениями — "
-    "и добавь объект в diagrams: id (например d1, уникален на странице), краткий alt_text и "
-    "приблизительный bbox [x0, y0, x1, y1] в долях размеров страницы (0..1). "
-    "В markdown на месте рисунка вставь плейсхолдер "
-    "[Рисунок: <alt_text> | diagram_id=<id>]. "
+    "Каждый рисунок (график, диаграмму, чертёж, схему, числовую или координатную прямую, "
+    "таблицу-рисунок) переноси в markdown как [Рисунок: <подробное описание>]. Описание "
+    "должно быть достаточным, чтобы по нему нарисовать аналогичный рисунок: тип рисунка; "
+    "все числа, подписи, деления, отмеченные точки и их примерное положение; для "
+    "геометрии — фигуры, вершины, отмеченные углы и длины; для графиков — оси, диапазоны, "
+    "вид кривой; для схем — элементы и как они соединены. "
     "Не добавляй ничего, чего нет на странице. "
-    "Верни ТОЛЬКО JSON по заданной схеме: поле markdown и список diagrams."
+    "Верни ТОЛЬКО JSON по заданной схеме: поле markdown."
 )
-
-
-class PageDiagram(BaseModel):
-    id: str
-    alt_text: str
-    bbox: list[float]  # [x0, y0, x1, y1], доли размеров страницы, 0..1
 
 
 class PageTranscription(BaseModel):
     markdown: str
-    diagrams: list[PageDiagram] = Field(default_factory=list)
+
+
+class TikzFix(BaseModel):
+    tikz: str
 
 
 # Модель иногда пишет LaTeX в JSON-строке с одним слэшем ("\frac" вместо "\\frac"):
@@ -110,6 +117,7 @@ def _quiz_schema() -> dict:
 
 QUIZ_JSON_SCHEMA = _quiz_schema()
 PAGE_JSON_SCHEMA = _strictify(PageTranscription.model_json_schema())
+TIKZ_FIX_JSON_SCHEMA = _strictify(TikzFix.model_json_schema())
 
 
 def build_user_prompt(
@@ -261,7 +269,7 @@ async def _call_llm(
 
 
 async def transcribe_page(png_bytes: bytes, page_no: int) -> PageTranscription:
-    """Распознать одну страницу PDF (PNG) в Markdown + список рисунков через vision-модель.
+    """Распознать одну страницу PDF (PNG) в Markdown через vision-модель.
     При сбое возвращает пустую транскрипцию — вызывающий код откатится на текстовый слой."""
     b64 = base64.b64encode(png_bytes).decode()
     messages = [
@@ -284,7 +292,7 @@ async def transcribe_page(png_bytes: bytes, page_no: int) -> PageTranscription:
         log.warning("vision-распознавание страницы %d не удалось: %s", page_no, e.detail)
     except (ValidationError, json.JSONDecodeError) as e:
         log.warning("vision-ответ для страницы %d невалиден: %s", page_no, str(e).splitlines()[0])
-    return PageTranscription(markdown="", diagrams=[])
+    return PageTranscription(markdown="")
 
 
 async def generate_quiz(
@@ -329,3 +337,35 @@ async def generate_quiz(
         })
 
     raise HTTPException(502, f"LLM вернул невалидный тест после ретрая: {last_err}")
+
+
+TIKZ_FIX_SYSTEM_PROMPT = (
+    "Ты исправляешь рисунок TikZ, который не скомпилировался. Тело вставляется в готовый "
+    "документ с пакетами tikz, pgfplots (compat=1.18), circuitikz (опция european) и "
+    "библиотеками calc, angles, quotes, intersections, arrows.meta, patterns, "
+    "decorations.markings. Верни ровно одно окружение tikzpicture или circuitikz, без "
+    "преамбулы, \\documentclass и \\usepackage; номера строк в ошибке — относительно "
+    "присланного тела. Сохрани смысл рисунка и числа из условия. "
+    "В JSON-строках каждый обратный слэш удваивай. "
+    "Верни ТОЛЬКО JSON по заданной схеме: поле tikz."
+)
+
+
+async def fix_tikz(question_text: str, tikz: str, error_log: str) -> str:
+    """Один LLM-вызов: вернуть исправленное тело TikZ. Ошибки сети/валидации
+    пробрасываются — вызывающий считает их неудачной попыткой."""
+    messages = [
+        {"role": "system", "content": TIKZ_FIX_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Условие вопроса:\n{question_text}\n\n"
+                f"Исходник рисунка:\n{tikz}\n\n"
+                f"Ошибка компиляции:\n{error_log}"
+            ),
+        },
+    ]
+    raw = await _call_llm(
+        messages, attempt=1, response_format=_response_format("tikz", TIKZ_FIX_JSON_SCHEMA)
+    )
+    return TikzFix.model_validate_json(_fix_latex_escapes(raw)).tikz

@@ -53,7 +53,7 @@ def test_generate_quiz_repairs_single_backslash_latex(monkeypatch) -> None:
         '{"title": "Т", "questions": [{"id": 1, "type": "single", '
         r'"text": "Какое из чисел $\frac{6}{11}$ больше $\sqrt{0.25}$?", '
         r'"options": ["$\frac{6}{11}$", "$\frac{1}{2}$"], "correct_indexes": [0], '
-        r'"correct_text": null, "explanation": "$\frac{6}{11} \approx 0.545$", "diagram_id": null}]}'
+        r'"correct_text": null, "explanation": "$\frac{6}{11} \approx 0.545$", "tikz": null}]}'
     )
     calls = []
 

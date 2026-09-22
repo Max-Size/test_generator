@@ -52,6 +52,37 @@ describe("generateQuiz", () => {
     vi.unstubAllGlobals();
   });
 
+  it("forwards diagrams progress events with their detail", async () => {
+    const responseBody = { quiz: { questions: [] }, source_chars: 10, truncated: false };
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockSseResponse([
+        { type: "progress", stage: "generate", detail: null },
+        { type: "progress", stage: "diagrams", detail: { processed: 0, total: 2 } },
+        { type: "progress", stage: "diagrams", detail: { processed: 2, total: 2 } },
+        { type: "result", data: responseBody },
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onProgress = vi.fn();
+    const result = await generateQuiz(
+      {
+        files: [],
+        numQuestions: 5,
+        questionTypes: ["single"],
+        topics: "",
+        sourceKinds: ["material"],
+      },
+      onProgress,
+    );
+
+    expect(result).toEqual(responseBody);
+    expect(onProgress).toHaveBeenNthCalledWith(2, "diagrams", { processed: 0, total: 2 });
+    expect(onProgress).toHaveBeenNthCalledWith(3, "diagrams", { processed: 2, total: 2 });
+
+    vi.unstubAllGlobals();
+  });
+
   it("returns truncated_files when the backend reports truncated/dropped files", async () => {
     const responseBody = {
       quiz: { questions: [] },
