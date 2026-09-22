@@ -4,64 +4,93 @@ import UploadForm, { type FormValues } from "./components/UploadForm";
 import QuizView from "./components/QuizView";
 import GenerationProgress from "./components/GenerationProgress";
 import type { GenerateResponse, ProgressState } from "./types";
+import { WarnIcon, XIcon } from "./icons";
+
+type View = "form" | "loading" | "test" | "review";
 
 export default function App() {
-  // `submitting` covers the moment between clicking the button and the first
-  // `progress` SSE event (so the button disables immediately, as it did with
-  // the old boolean `loading`); `progress` drives the step checklist.
-  const [submitting, setSubmitting] = useState(false);
+  const [view, setView] = useState<View>("form");
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerateResponse | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const handleSubmit = async (v: FormValues) => {
-    setSubmitting(true);
+    setView("loading");
     setError(null);
-    setResult(null);
+    setProgress(null);
     try {
-      setResult(
-        await generateQuiz(v, (stage, detail) =>
-          setProgress({ stage, detail } as unknown as ProgressState),
-        ),
+      const res = await generateQuiz(v, (stage, detail) =>
+        setProgress({ stage, detail } as unknown as ProgressState),
       );
+      setResult(res);
+      setView("test");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Неизвестная ошибка");
+      setView("form");
     } finally {
-      setSubmitting(false);
       setProgress(null);
     }
   };
 
+  const handleRetake = () => {
+    setAttempt((a) => a + 1);
+    setView("test");
+  };
+
+  const handleNewTest = () => {
+    setResult(null);
+    setView("form");
+  };
+
   return (
-    <div className="min-h-screen bg-slate-100 py-10">
-      <div className="mx-auto max-w-2xl px-4">
-        <h1 className="mb-6 text-2xl font-bold text-slate-900">Генератор тестов</h1>
-
-        <UploadForm loading={submitting} onSubmit={handleSubmit} />
-        <GenerationProgress progress={progress} />
-
-        {error && (
-          <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>
-        )}
-
-        {result && (
-          <div className="mt-8">
-            {result.truncated && (
-              <ul className="mb-3 rounded-md bg-amber-50 p-3 text-xs text-amber-600">
-                {(result.truncated_files ?? []).map((f) => (
-                  <li key={f.filename}>
-                    {f.filename} —{" "}
-                    {f.reason === "partial"
-                      ? "обрезан, не поместился целиком"
-                      : "не поместился, не включён в тест"}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <QuizView quiz={result.quiz} />
-          </div>
-        )}
+    <div className="app">
+      <div className="bg-spots" aria-hidden="true">
+        <div className="blob b1" />
+        <div className="blob b2" />
+        <div className="blob b3" />
+        <div className="blob b4" />
       </div>
+      <h1 className="app-title">Генератор тестов</h1>
+
+      {view === "form" && (
+        <>
+          {error && (
+            <div className="msg msg-err section" role="alert">
+              <span className="msg-ic">
+                <WarnIcon />
+              </span>
+              <div className="msg-b">
+                <p className="msg-t">Не удалось создать тест</p>
+                <p className="msg-p">{error}</p>
+              </div>
+              <button
+                type="button"
+                className="msg-close"
+                aria-label="Закрыть сообщение об ошибке"
+                onClick={() => setError(null)}
+              >
+                <XIcon className="ic sm" />
+              </button>
+            </div>
+          )}
+          <UploadForm loading={false} onSubmit={handleSubmit} />
+        </>
+      )}
+
+      {view === "loading" && <GenerationProgress progress={progress} />}
+
+      {(view === "test" || view === "review") && result && (
+        <QuizView
+          key={attempt}
+          quiz={result.quiz}
+          mode={view}
+          truncatedFiles={result.truncated ? result.truncated_files : undefined}
+          onCheck={() => setView("review")}
+          onRetake={handleRetake}
+          onNewTest={handleNewTest}
+        />
+      )}
     </div>
   );
 }

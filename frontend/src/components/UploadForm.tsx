@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { CheckIcon, FolderIcon, TrashIcon } from "../icons";
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "single", label: "Один ответ" },
@@ -7,11 +8,21 @@ const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "short", label: "Короткий ответ" },
 ];
 
-const SOURCE_KIND_OPTIONS: { value: string; label: string }[] = [
-  { value: "material", label: "Теория / конспект" },
-  { value: "specification", label: "Спецификация / темы экзамена" },
-  { value: "sample", label: "Образец варианта / примеры заданий" },
+const SOURCE_KIND_OPTIONS: { value: string; label: string; desc: string }[] = [
+  { value: "material", label: "Теория / конспект", desc: "Тест строится по тексту документа." },
+  {
+    value: "specification",
+    label: "Спецификация / темы экзамена",
+    desc: "Тест строится по описанным темам, а не по тексту документа.",
+  },
+  {
+    value: "sample",
+    label: "Образец варианта / примеры заданий",
+    desc: "Можно определить количество вопросов по образцу.",
+  },
 ];
+
+const ACCEPTED_EXT = [".pdf", ".docx", ".txt", ".md"];
 
 export interface FormValues {
   files: File[];
@@ -19,6 +30,37 @@ export interface FormValues {
   questionTypes: string[];
   topics: string;
   sourceKinds: string[];
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0).replace(".", ",")} КБ`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0).replace(".", ",")} МБ`;
+}
+
+function extBadge(name: string): string {
+  const idx = name.lastIndexOf(".");
+  return idx === -1 ? "?" : name.slice(idx + 1).slice(0, 4);
+}
+
+function pluralFiles(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "файлов";
+  if (mod10 === 1) return "файл";
+  if (mod10 >= 2 && mod10 <= 4) return "файла";
+  return "файлов";
+}
+
+function pluralQuestions(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "вопросов";
+  if (mod10 === 1) return "вопрос";
+  if (mod10 >= 2 && mod10 <= 4) return "вопроса";
+  return "вопросов";
 }
 
 export default function UploadForm({
@@ -34,141 +76,253 @@ export default function UploadForm({
   const [questionTypes, setQuestionTypes] = useState<string[]>(["single", "true_false"]);
   const [topics, setTopics] = useState("");
   const [sourceKinds, setSourceKinds] = useState<string[]>(["material"]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = (list: FileList | null) => {
+    if (!list) return;
+    setFiles((prev) => [...prev, ...Array.from(list)]);
+  };
+
+  const removeFile = (idx: number) => setFiles((prev) => prev.filter((_, i) => i !== idx));
 
   const toggleKind = (v: string) =>
-    setSourceKinds((prev) =>
-      prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v],
-    );
+    setSourceKinds((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
 
   const toggleType = (v: string) =>
-    setQuestionTypes((prev) =>
-      prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v],
-    );
+    setQuestionTypes((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
 
   const hasSample = sourceKinds.includes("sample");
   const useAuto = autoCount && hasSample;
 
-  const canSubmit = files.length > 0 && questionTypes.length > 0 && sourceKinds.length > 0 && !loading;
+  const missing: string[] = [];
+  if (files.length === 0) missing.push("файлы");
+  if (sourceKinds.length === 0) missing.push("тип документа");
+  if (questionTypes.length === 0) missing.push("типы вопросов");
+
+  const canSubmit = missing.length === 0 && !loading;
 
   return (
     <form
-      className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      className="glass1"
+      style={{ padding: 28 }}
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onSubmit({ files, numQuestions: useAuto ? null : numQuestions, questionTypes, topics, sourceKinds });
+        if (canSubmit) {
+          onSubmit({
+            files,
+            numQuestions: useAuto ? null : numQuestions,
+            questionTypes,
+            topics,
+            sourceKinds,
+          });
+        }
       }}
     >
-      <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
-          Документы (pdf, docx, txt, md)
-        </label>
+      {/* 1. Files */}
+      <div className="section">
+        <span className="label" id="files-label">
+          1. Документы (pdf, docx, txt, md)
+        </span>
+        <div
+          className={`drop${files.length > 0 ? " compact" : ""}${dragOver ? " over" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-labelledby="files-label"
+          onClick={() => fileInputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            addFiles(e.dataTransfer.files);
+          }}
+        >
+          <span className="drop-ic" aria-hidden="true">
+            <FolderIcon />
+          </span>
+          <span className="drop-b">
+            <span className="drop-t">
+              {files.length > 0 ? "Добавить ещё файлы" : "Перетащите файлы сюда или нажмите, чтобы выбрать"}
+            </span>
+            {files.length === 0 && <span className="drop-s">PDF, DOCX, TXT или MD. Можно загрузить несколько.</span>}
+          </span>
+        </div>
         <input
+          ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,.txt,.md"
-          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-          className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-slate-200"
+          accept={ACCEPTED_EXT.join(",")}
+          className="sr-only"
+          onChange={(e) => {
+            addFiles(e.target.files);
+            e.target.value = "";
+          }}
         />
         {files.length > 0 && (
-          <p className="mt-1 text-xs text-slate-500">
-            {files.map((f) => f.name).join(", ")}
-          </p>
+          <ul className="files">
+            {files.map((f, i) => (
+              <li className="file" key={`${f.name}-${f.size}-${i}`}>
+                <span className="ext">{extBadge(f.name)}</span>
+                <span className="fname">
+                  <span className="fn">{f.name}</span>
+                  <span className="fs">{formatSize(f.size)}</span>
+                </span>
+                <button
+                  type="button"
+                  className="iconbtn"
+                  aria-label={`Удалить файл ${f.name}`}
+                  onClick={() => removeFile(i)}
+                >
+                  <TrashIcon className="ic sm" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
-          Что содержит документ
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {SOURCE_KIND_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => toggleKind(opt.value)}
-              className={`rounded-full border px-3 py-1 text-sm ${
-                sourceKinds.includes(opt.value)
-                  ? "border-indigo-600 bg-indigo-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <p className="mt-1 text-xs text-slate-500">
-          Для спецификации экзамена тест строится по описанным темам и образцу варианта,
-          а не по тексту документа.
-        </p>
-      </div>
-
-      {hasSample && (
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={autoCount}
-            onChange={(e) => setAutoCount(e.target.checked)}
-          />
-          Определить количество по образцу
-        </label>
-      )}
-
-      {!useAuto && (
-  <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Количество вопросов: {numQuestions}
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={30}
-            value={numQuestions}
-            onChange={(e) => setNumQuestions(Number(e.target.value))}
-            className="w-full"
-          />
-        </div>
-      )}
-
-      <div>
-        <span className="mb-1 block text-sm font-medium text-slate-700">Типы вопросов</span>
-        <div className="flex flex-wrap gap-2">
-          {TYPE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => toggleType(opt.value)}
-              className={`rounded-full border px-3 py-1 text-sm ${
-                questionTypes.includes(opt.value)
-                  ? "border-indigo-600 bg-indigo-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+      {/* 2. Document type */}
+      <div className="section">
+        <span className="label">2. Что содержит документ</span>
+        <div className="tiles">
+          {SOURCE_KIND_OPTIONS.map((opt) => {
+            const on = sourceKinds.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`tile${on ? " on" : ""}`}
+                aria-pressed={on}
+                onClick={() => toggleKind(opt.value)}
+              >
+                <span className="tile-t">{opt.label}</span>
+                <span className="tile-s">{opt.desc}</span>
+                <span className="cb" aria-hidden="true">
+                  {on && <CheckIcon className="ic sm" />}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
-          Темы для фокуса (необязательно)
+      {/* 3. Question count */}
+      <div className="section">
+        <span className="label">3. Количество вопросов</span>
+        {hasSample && (
+          <div className="switch-row" style={{ marginBottom: useAuto ? 0 : 16 }}>
+            <button
+              type="button"
+              role="switch"
+              id="auto-count-switch"
+              aria-checked={autoCount}
+              className="switch"
+              onClick={() => setAutoCount((v) => !v)}
+            />
+            <label htmlFor="auto-count-switch" style={{ cursor: "pointer" }}>
+              Определить количество по образцу
+            </label>
+          </div>
+        )}
+        {!useAuto && (
+          <div className="slider-block">
+            <div className="sl-head">
+              <span className="hint" style={{ margin: 0 }}>
+                Сколько вопросов включить в тест
+              </span>
+              <span className="count">{numQuestions}</span>
+            </div>
+            <div className="slider">
+              <div className="track">
+                <div className="fill" style={{ width: `${((numQuestions - 1) / 29) * 100}%` }} />
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                value={numQuestions}
+                className="range"
+                aria-label="Количество вопросов"
+                onChange={(e) => setNumQuestions(Number(e.target.value))}
+              />
+              <div className="thumb" style={{ left: `calc((100% - 28px) * ${(numQuestions - 1) / 29})` }} />
+            </div>
+            <div className="sl-scale">
+              <span>1</span>
+              <span>30</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 4. Question types */}
+      <div className="section">
+        <span className="label">4. Типы вопросов</span>
+        <div className="chips">
+          {TYPE_OPTIONS.map((opt) => {
+            const on = questionTypes.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`chip${on ? " on" : ""}`}
+                aria-pressed={on}
+                onClick={() => toggleType(opt.value)}
+              >
+                {on && <CheckIcon className="ic sm" />}
+                <span>{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 5. Topics */}
+      <div className="section">
+        <label className="label" htmlFor="topics-input">
+          5. Темы для фокуса (необязательно)
         </label>
         <input
+          id="topics-input"
           type="text"
           value={topics}
           onChange={(e) => setTopics(e.target.value)}
           placeholder="например: интегралы, теорема Стокса"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="field"
         />
       </div>
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="w-full rounded-md bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-      >
-        {loading ? "Генерируем…" : "Создать тест"}
-      </button>
+      <div className="action">
+        <div className="action-l">
+          {missing.length > 0 ? (
+            <ul className="miss-list">
+              {missing.map((m) => (
+                <li key={m} className="miss">
+                  Не хватает: {m}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="ready-summary">
+              Всё готово: {files.length} {pluralFiles(files.length)},{" "}
+              {useAuto ? "количество вопросов по образцу" : `${numQuestions} ${pluralQuestions(numQuestions)}`}
+            </p>
+          )}
+        </div>
+        <button type="submit" disabled={!canSubmit} className="btn btn-primary lg">
+          {loading ? "Генерируем…" : "Создать тест"}
+        </button>
+      </div>
     </form>
   );
 }

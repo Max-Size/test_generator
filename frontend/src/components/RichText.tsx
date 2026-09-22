@@ -38,12 +38,10 @@ export default function RichText({ children }: { children: string }) {
       {parts.map((p) =>
         p.kind === "text" ? (
           <span key={p.key}>{p.value}</span>
+        ) : p.block ? (
+          <span key={p.key} className="paper fx" dangerouslySetInnerHTML={{ __html: p.html }} />
         ) : (
-          <span
-            key={p.key}
-            className={p.block ? "block my-2 overflow-x-auto" : ""}
-            dangerouslySetInnerHTML={{ __html: p.html }}
-          />
+          <span key={p.key} dangerouslySetInnerHTML={{ __html: p.html }} />
         ),
       )}
     </>
